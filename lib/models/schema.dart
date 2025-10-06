@@ -11,6 +11,7 @@ Schema schema = Schema([
     Column.real('amount'),            // Amount (positive for income, negative for expense)
     Column.text('type'),              // 'income' or 'expense'
     Column.text('category_id'),       // Foreign key to categories
+    Column.text('budget_id'),        // NEW FIELD
     Column.text('date'),              // Transaction date (ISO string)
     Column.text('notes'),             // Optional notes
     Column.text('created_at'),        // Creation timestamp
@@ -20,6 +21,7 @@ Schema schema = Schema([
     Index('transaction_date', [IndexedColumn('date')]),
     Index('transaction_type', [IndexedColumn('type')]),
     Index('transaction_category', [IndexedColumn('category_id')]),
+    Index('transaction_budget', [IndexedColumn('budget_id')]),  // NEW INDEX
   ]),
   
   // Categories table for organizing transactions
