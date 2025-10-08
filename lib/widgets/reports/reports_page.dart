@@ -1009,7 +1009,8 @@ class _ReportsPageState extends State<ReportsPage> {
                           style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
                         Text(
-                          DateFormat('MMM dd, yyyy').format(transaction.date),
+                          // date with day of the weeek
+                          DateFormat('EEE, MMM dd').format(transaction.date),
                           style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                         ),
                       ],

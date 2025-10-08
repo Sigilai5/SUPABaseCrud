@@ -52,7 +52,7 @@ class _TransactionFormState extends State<TransactionForm> {
       _categories = categories;
       if (_selectedCategoryId == null && categories.isNotEmpty) {
         _selectedCategoryId = categories.first.id;
-      }
+      } 
     });
   }
 

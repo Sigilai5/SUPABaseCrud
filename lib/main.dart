@@ -1,10 +1,10 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'powersync.dart';
+import 'services/mpesa_service.dart';  // Add this import
 import 'widgets/auth/login_page.dart';
 import 'widgets/transactions/transaction_list.dart';
-import 'widgets/categories/categories_page.dart';  // ← Import here
+import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/common/status_app_bar.dart';
 
@@ -15,7 +15,12 @@ void main() async {
   });
 
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize PowerSync database
   await openDatabase();
+  
+  // Initialize MPESA service
+  await MpesaService.initialize();  // Add this line
 
   final loggedIn = isLoggedIn();
   runApp(ExpenseTrackerApp(loggedIn: loggedIn));
@@ -50,15 +55,60 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
   final List<Widget> _pages = [
-    const TransactionList(),      // Index 0 - Transactions tab
-    const CategoriesPage(),        // Index 1 - Categories tab ← HERE!
-    const ReportsPage(),           // Index 2 - Reports tab
+    const TransactionList(),
+    const CategoriesPage(),
+    const ReportsPage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _checkPermissions();  // Add this
+  }
+
+  Future<void> _checkPermissions() async {
+    // Check and request SMS permission
+    final hasSms = await MpesaService.hasSmsPermission();
+    if (!hasSms) {
+      await MpesaService.requestSmsPermission();
+    }
+
+    // Check and request overlay permission
+    final hasOverlay = await MpesaService.hasOverlayPermission();
+    if (!hasOverlay && mounted) {
+      _showOverlayPermissionDialog();
+    }
+  }
+
+  void _showOverlayPermissionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable Auto-Detection'),
+        content: const Text(
+          'Allow overlay permission to automatically detect and confirm MPESA transactions from SMS.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              MpesaService.requestOverlayPermission();
+            },
+            child: const Text('Enable'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_selectedIndex],  // ← Shows selected page
+      body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
@@ -68,8 +118,8 @@ class _HomePageState extends State<HomePage> {
             label: 'Transactions',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.category),      // ← Categories icon
-            label: 'Categories',              // ← Categories label
+            icon: Icon(Icons.category),
+            label: 'Categories',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.analytics),
@@ -103,7 +153,6 @@ class AppDrawer extends StatelessWidget {
             title: const Text('Settings'),
             onTap: () {
               Navigator.pop(context);
-              // Navigate to settings
             },
           ),
           ListTile(
@@ -124,4 +173,3 @@ class AppDrawer extends StatelessWidget {
     );
   }
 }
-
