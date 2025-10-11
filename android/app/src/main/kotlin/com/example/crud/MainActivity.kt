@@ -48,6 +48,13 @@ class MainActivity : FlutterActivity() {
                     val type = call.argument<String>("type") ?: "expense"
                     val sender = call.argument<String>("sender") ?: "Unknown"
                     val rawMessage = call.argument<String>("rawMessage") ?: ""
+                    val transactionCode = call.argument<String>("transactionCode") ?: ""
+
+                    @Suppress("UNCHECKED_CAST")
+                    val categories = call.argument<List<Map<String, Any>>>("categories") ?: emptyList()
+
+                    Log.d(TAG, "showTransactionOverlay called")
+                    Log.d(TAG, "Received ${categories.size} categories from Flutter")
 
                     val intent = Intent(this, OverlayService::class.java).apply {
                         putExtra("title", title)
@@ -55,6 +62,8 @@ class MainActivity : FlutterActivity() {
                         putExtra("type", type)
                         putExtra("sender", sender)
                         putExtra("rawMessage", rawMessage)
+                        putExtra("transactionCode", transactionCode)
+                        putExtra("categories", ArrayList(categories.map { HashMap(it) }))
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
 

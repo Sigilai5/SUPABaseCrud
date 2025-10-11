@@ -157,7 +157,7 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- Category Field (Read-only) -->
+            <!-- Category Spinner (Editable) -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -175,29 +175,12 @@
                 app:cardElevation="1dp"
                 app:cardBackgroundColor="#F5F5F5">
 
-                <LinearLayout
+                <Spinner
+                    android:id="@+id/spinnerCategory"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="12dp">
-
-                    <View
-                        android:id="@+id/viewCategoryColor"
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:background="#4CAF50"
-                        android:layout_marginEnd="8dp"/>
-
-                    <TextView
-                        android:id="@+id/tvCategory"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="MPESA"
-                        android:textSize="16sp"
-                        android:textColor="@android:color/black"/>
-                </LinearLayout>
+                    android:padding="12dp"
+                    android:background="@android:color/transparent"/>
             </androidx.cardview.widget.CardView>
 
             <!-- Date Field (Read-only) -->
