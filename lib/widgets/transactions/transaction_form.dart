@@ -53,7 +53,7 @@ class _TransactionFormState extends State<TransactionForm> {
       if (_selectedCategoryId == null && categories.isNotEmpty) {
         _selectedCategoryId = categories.first.id;
       } 
-    });
+    });   
   }
 
   Future<void> _submit() async {

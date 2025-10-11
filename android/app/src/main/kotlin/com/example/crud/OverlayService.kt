@@ -15,11 +15,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
+import java.text.SimpleDateFormat
+import java.util.*
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
@@ -30,6 +33,20 @@ class OverlayService : Service() {
     private val PENDING_TRANSACTIONS = "pending_transactions"
     private var transactionCode: String? = null
 
+    // Store original transaction data
+    private var originalAmount: Double = 0.0
+    private var originalType: String = "expense"
+
+    // UI Elements
+    private lateinit var etTitle: EditText
+    private lateinit var etNotes: EditText
+    private lateinit var tvAmount: TextView
+    private lateinit var tvType: TextView
+    private lateinit var tvSender: TextView
+    private lateinit var tvCategory: TextView
+    private lateinit var tvDate: TextView
+    private lateinit var viewCategoryColor: View
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -39,6 +56,16 @@ class OverlayService : Service() {
 
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         overlayView = inflater.inflate(R.layout.transaction_overlay, null)
+
+        // Initialize UI elements
+        etTitle = overlayView.findViewById(R.id.etTitle)
+        etNotes = overlayView.findViewById(R.id.etNotes)
+        tvAmount = overlayView.findViewById(R.id.tvAmount)
+        tvType = overlayView.findViewById(R.id.tvType)
+        tvSender = overlayView.findViewById(R.id.tvSender)
+        tvCategory = overlayView.findViewById(R.id.tvCategory)
+        tvDate = overlayView.findViewById(R.id.tvDate)
+        viewCategoryColor = overlayView.findViewById(R.id.viewCategoryColor)
 
         setupWindowManager()
         setupClickListeners()
@@ -90,18 +117,40 @@ class OverlayService : Service() {
         overlayView.findViewById<Button>(R.id.btnSave).setOnClickListener {
             Log.d(TAG, "Save button clicked")
 
+            // Get user-edited values
+            val editedTitle = etTitle.text.toString().trim()
+            val editedNotes = etNotes.text.toString().trim()
+
+            // Validate
+            if (editedTitle.isEmpty()) {
+                Toast.makeText(this, "Please enter a title", Toast.LENGTH_SHORT).show()
+                etTitle.requestFocus()
+                return@setOnClickListener
+            }
+
             // Try to send to Flutter if available
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
             if (engine != null) {
+                // Send the edited data to Flutter as a Map
+                val transactionData = mapOf(
+                    "confirmed" to true,
+                    "title" to editedTitle,
+                    "amount" to originalAmount,
+                    "type" to originalType,
+                    "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
+                    "transactionCode" to transactionCode
+                )
+
                 MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
-                    .invokeMethod("onTransactionConfirmed", true)
-                Log.d(TAG, "Transaction confirmed sent to Flutter")
+                    .invokeMethod("onTransactionConfirmed", transactionData)
+
+                Log.d(TAG, "Transaction confirmed with edited data: title='$editedTitle', notes='$editedNotes'")
                 Toast.makeText(this, "Transaction saved successfully!", Toast.LENGTH_SHORT).show()
             } else {
-                // Save locally if Flutter not available
-                Log.d(TAG, "Flutter not available - transaction will be processed when app opens")
+                // Save to SharedPreferences with edited data
+                Log.d(TAG, "Flutter not available - saving edited transaction to SharedPreferences")
+                savePendingTransactionWithEdits(editedTitle, editedNotes)
                 Toast.makeText(this, "Transaction saved! Open app to view.", Toast.LENGTH_SHORT).show()
-                // The transaction is already saved in SharedPreferences by SmsReceiver
             }
 
             stopSelf()
@@ -116,11 +165,47 @@ class OverlayService : Service() {
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
             if (engine != null) {
                 MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
-                    .invokeMethod("onTransactionConfirmed", false)
+                    .invokeMethod("onTransactionConfirmed", mapOf("confirmed" to false))
             }
 
             Toast.makeText(this, "Transaction dismissed", Toast.LENGTH_SHORT).show()
             stopSelf()
+        }
+    }
+
+    private fun savePendingTransactionWithEdits(title: String, notes: String) {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+            // Escape quotes in strings for JSON
+            val escapedTitle = title.replace("\"", "\\\"").replace("\n", "\\n")
+            val escapedNotes = notes.replace("\"", "\\\"").replace("\n", "\\n")
+
+            // Create JSON with edited data
+            val jsonString = """
+                {
+                    "title": "$escapedTitle",
+                    "amount": $originalAmount,
+                    "type": "$originalType",
+                    "transactionCode": "$transactionCode",
+                    "notes": "$escapedNotes",
+                    "timestamp": ${System.currentTimeMillis()}
+                }
+            """.trimIndent()
+
+            // Get existing pending transactions
+            val existingJson = prefs.getString(PENDING_TRANSACTIONS, "[]")
+            val updatedJson = if (existingJson == "[]") {
+                "[$jsonString]"
+            } else {
+                existingJson?.dropLast(1) + ",$jsonString]"
+            }
+
+            prefs.edit().putString(PENDING_TRANSACTIONS, updatedJson).apply()
+            Log.d(TAG, "Transaction with edits saved to SharedPreferences: $jsonString")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving pending transaction with edits: ${e.message}", e)
         }
     }
 
@@ -140,7 +225,7 @@ class OverlayService : Service() {
                 Log.d(TAG, "Removed transaction $transactionCode from pending list")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error removing pending transaction: ${e.message}")
+            Log.e(TAG, "Error removing pending transaction: ${e.message}", e)
         }
     }
 
@@ -152,27 +237,38 @@ class OverlayService : Service() {
             val sender = it.getStringExtra("sender") ?: "MPESA"
             transactionCode = it.getStringExtra("transactionCode")
 
-            overlayView.findViewById<TextView>(R.id.tvTitle).text = title
-            overlayView.findViewById<TextView>(R.id.tvAmount).text =
-                "KES ${String.format("%.2f", amount)}"
-            overlayView.findViewById<TextView>(R.id.tvType).text =
-                type.uppercase()
-            overlayView.findViewById<TextView>(R.id.tvSender).text = "From: $sender"
+            // Store original data
+            originalAmount = amount
+            originalType = type
 
-            // Update type badge color
-            val tvType = overlayView.findViewById<TextView>(R.id.tvType)
-            val tvAmount = overlayView.findViewById<TextView>(R.id.tvAmount)
+            // Populate UI fields
+            etTitle.setText(title)
+            tvAmount.text = String.format("%.2f", amount)
+            tvType.text = type.uppercase()
+            tvSender.text = "From: $sender"
+            tvCategory.text = "MPESA"
+
+            // Format current date
+            val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+            tvDate.text = dateFormat.format(Date())
+
+            // Pre-fill notes with transaction code
+            etNotes.setText("Auto-detected from MPESA SMS\nCode: $transactionCode")
+
+            // Update type badge and amount color
             if (type == "income") {
                 tvType.setBackgroundColor(android.graphics.Color.parseColor("#E8F5E9"))
                 tvType.setTextColor(android.graphics.Color.parseColor("#4CAF50"))
                 tvAmount.setTextColor(android.graphics.Color.parseColor("#4CAF50"))
+                viewCategoryColor.setBackgroundColor(android.graphics.Color.parseColor("#4CAF50"))
             } else {
                 tvType.setBackgroundColor(android.graphics.Color.parseColor("#FFEBEE"))
                 tvType.setTextColor(android.graphics.Color.parseColor("#F44336"))
                 tvAmount.setTextColor(android.graphics.Color.parseColor("#F44336"))
+                viewCategoryColor.setBackgroundColor(android.graphics.Color.parseColor("#F44336"))
             }
 
-            Log.d(TAG, "Overlay displayed: $title - $amount ($type)")
+            Log.d(TAG, "Overlay displayed: $title - $amount ($type) - Code: $transactionCode")
         }
         return START_STICKY
     }
@@ -180,7 +276,12 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         if (::overlayView.isInitialized && ::windowManager.isInitialized) {
-            windowManager.removeView(overlayView)
+            try {
+                windowManager.removeView(overlayView)
+                Log.d(TAG, "Overlay removed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing overlay: ${e.message}")
+            }
         }
     }
 }
