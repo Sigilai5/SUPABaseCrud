@@ -59,25 +59,30 @@ class MpesaService {
 
   static Future<void> _saveTransaction(MpesaTransaction mpesaTransaction) async {
     try {
+      print('Attempting to save transaction: ${mpesaTransaction.title}');
+      
       // Find or create MPESA category
       final categories = await Category.watchUserCategories().first;
-      Category? mpesaCategory = categories.firstWhere(
-        (cat) => cat.name.toLowerCase() == 'mpesa',
-        orElse: () => categories.first, // Use first category as fallback
-      );
-
-      // If no MPESA category exists, create one
-      if (mpesaCategory.name.toLowerCase() != 'mpesa') {
+      Category? mpesaCategory;
+      
+      try {
+        mpesaCategory = categories.firstWhere(
+          (cat) => cat.name.toLowerCase() == 'mpesa',
+        );
+        print('Found existing MPESA category: ${mpesaCategory.id}');
+      } catch (e) {
+        print('MPESA category not found, creating new one');
         mpesaCategory = await Category.create(
           name: 'MPESA',
           type: 'both',
           color: '#4CAF50',
           icon: 'payments',
         );
+        print('Created MPESA category: ${mpesaCategory.id}');
       }
 
       // Create the transaction
-      await Transaction.create(
+      final transaction = await Transaction.create(
         title: mpesaTransaction.title,
         amount: mpesaTransaction.amount,
         type: mpesaTransaction.type == 'income' 
@@ -88,9 +93,11 @@ class MpesaService {
         notes: 'Auto-detected from MPESA SMS\nCode: ${mpesaTransaction.transactionCode}',
       );
 
-      print('Transaction saved successfully: ${mpesaTransaction.title}');
-    } catch (e) {
+      print('Transaction saved successfully: ${transaction.id}');
+    } catch (e, stackTrace) {
       print('Error saving transaction: $e');
+      print('Stack trace: $stackTrace');
+      rethrow; // Re-throw so caller knows it failed
     }
   }
 
@@ -144,22 +151,58 @@ class MpesaService {
   }
 
   static Future<void> processPendingTransactions() async {
-  try {
-    // This would need a method channel to read SharedPreferences
-    // For simplicity, we'll handle it when the overlay confirms
-    print('Checking for pending transactions...');
-  } catch (e) {
-    print('Error processing pending transactions: $e');
+    try {
+      print('Checking for pending transactions...');
+      
+      // Get pending transactions from SharedPreferences via MethodChannel
+      final List<dynamic>? pendingList = await _channel.invokeMethod('getPendingTransactions');
+      
+      if (pendingList == null || pendingList.isEmpty) {
+        print('No pending transactions found');
+        return;
+      }
+      
+      print('Found ${pendingList.length} pending transactions to process');
+      
+      // Process each pending transaction
+      for (var item in pendingList) {
+        try {
+          final Map<String, dynamic> data = Map<String, dynamic>.from(item);
+          
+          // Convert to MpesaTransaction object
+          final mpesaTransaction = MpesaTransaction(
+            title: data['title'] as String,
+            amount: (data['amount'] as num).toDouble(),
+            type: data['type'] as String,
+            transactionCode: data['transactionCode'] as String,
+            date: DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int),
+            rawMessage: '', // Not stored in SharedPreferences
+          );
+          
+          // Save to database
+          await _saveTransaction(mpesaTransaction);
+          print('Processed pending transaction: ${mpesaTransaction.title}');
+          
+        } catch (e) {
+          print('Error processing individual transaction: $e');
+        }
+      }
+      
+      // Clear all pending transactions after successful processing
+      await _channel.invokeMethod('clearPendingTransactions');
+      print('Cleared all pending transactions from SharedPreferences');
+      
+    } catch (e) {
+      print('Error processing pending transactions: $e');
+    }
   }
-}
 
-
-static Future<void> requestBatteryOptimizationExemption() async {
-  try {
-    final platform = MethodChannel('com.example.crud/mpesa');
-    await platform.invokeMethod('disableBatteryOptimization');
-  } catch (e) {
-    print('Error requesting battery optimization exemption: $e');
+  static Future<void> requestBatteryOptimizationExemption() async {
+    try {
+      final platform = MethodChannel('com.example.crud/mpesa');
+      await platform.invokeMethod('disableBatteryOptimization');
+    } catch (e) {
+      print('Error requesting battery optimization exemption: $e');
+    }
   }
-}
 }

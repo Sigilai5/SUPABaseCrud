@@ -20,9 +20,13 @@ void main() async {
   await openDatabase();
   
   // Initialize MPESA service
-  await MpesaService.initialize();  // Add this line
+  // Initialize MPESA service
+await MpesaService.initialize();
 
-  final loggedIn = isLoggedIn();
+// Process any pending transactions from when app was closed
+await MpesaService.processPendingTransactions();  // ADD THIS LINE
+
+final loggedIn = isLoggedIn();
   runApp(ExpenseTrackerApp(loggedIn: loggedIn));
 }
 
