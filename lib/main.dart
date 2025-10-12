@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'powersync.dart';
-import 'services/mpesa_service.dart';  // Add this import
+import 'services/mpesa_service.dart';
 import 'widgets/auth/login_page.dart';
 import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
-import 'widgets/common/status_app_bar.dart';
+import 'widgets/settings/settings_page.dart';
 
 void main() async {
   Logger.root.level = Level.INFO;
@@ -16,17 +16,11 @@ void main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize PowerSync database
   await openDatabase();
-  
-  // Initialize MPESA service
-  // Initialize MPESA service
-await MpesaService.initialize();
+  await MpesaService.initialize();
+  await MpesaService.processPendingTransactions();
 
-// Process any pending transactions from when app was closed
-await MpesaService.processPendingTransactions();  // ADD THIS LINE
-
-final loggedIn = isLoggedIn();
+  final loggedIn = isLoggedIn();
   runApp(ExpenseTrackerApp(loggedIn: loggedIn));
 }
 
@@ -57,6 +51,13 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  final List<String> _pageTitles = [
+    'Transactions',
+    'Categories',
+    'Reports',
+  ];
 
   final List<Widget> _pages = [
     const TransactionList(),
@@ -67,17 +68,15 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _checkPermissions();  // Add this
+    _checkPermissions();
   }
 
   Future<void> _checkPermissions() async {
-    // Check and request SMS permission
     final hasSms = await MpesaService.hasSmsPermission();
     if (!hasSms) {
       await MpesaService.requestSmsPermission();
     }
 
-    // Check and request overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
     if (!hasOverlay && mounted) {
       _showOverlayPermissionDialog();
@@ -112,6 +111,17 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
+      appBar: AppBar(
+        title: Text(_pageTitles[_selectedIndex]),
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () {
+            _scaffoldKey.currentState?.openDrawer();
+          },
+        ),
+      ),
+      drawer: const AppDrawer(),
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
@@ -131,7 +141,6 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      drawer: const AppDrawer(),
     );
   }
 }
@@ -142,35 +151,198 @@ class AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          const DrawerHeader(
-            decoration: BoxDecoration(color: Colors.blue),
-            child: Text(
-              'Expense Tracker',
-              style: TextStyle(color: Colors.white, fontSize: 24),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            Container(
+              height: 180,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.blue.shade700,
+                    Colors.blue.shade500,
+                  ],
+                ),
+              ),
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.white,
+                    child: Icon(
+                      Icons.account_balance_wallet,
+                      size: 32,
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Expense Tracker',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Manage your finances',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
           ListTile(
-            leading: const Icon(Icons.settings),
-            title: const Text('Settings'),
+            leading: const Icon(Icons.list),
+            title: const Text('Transactions'),
             onTap: () {
               Navigator.pop(context);
             },
           ),
           ListTile(
-            leading: const Icon(Icons.logout),
-            title: const Text('Sign Out'),
-            onTap: () async {
+            leading: const Icon(Icons.category),
+            title: const Text('Categories'),
+            onTap: () {
               Navigator.pop(context);
-              await logout();
-              if (context.mounted) {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (context) => const LoginPage()),
-                );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.analytics),
+            title: const Text('Reports'),
+            onTap: () {
+              Navigator.pop(context);
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.settings),
+            title: const Text('Settings'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const SettingsPage(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.help_outline),
+            title: const Text('Help & Support'),
+            onTap: () {
+              Navigator.pop(context);
+              _showHelpDialog(context);
+            },
+          ),
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text(
+                'Sign Out',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () async {
+              Navigator.pop(context);
+              final shouldSignOut = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Sign Out'),
+                  content: const Text('Are you sure you want to sign out?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+              );
+
+              if (shouldSignOut == true && context.mounted) {
+                await logout();
+                if (context.mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (context) => const LoginPage()),
+                    (route) => false,
+                  );
+                }
               }
             },
+          ),
+
+         ) ],
+
+      ),
+      ),
+    );
+  }
+
+  void _showHelpDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Help & Support'),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Getting Started',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '1. Enable SMS and Overlay permissions in Settings\n'
+                '2. Create categories for your transactions\n'
+                '3. Add transactions manually or let them auto-detect from MPESA SMS\n'
+                '4. View reports to track your spending',
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Features',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '• Automatic MPESA transaction detection\n'
+                '• Real-time sync across devices\n'
+                '• Detailed spending reports\n'
+                '• Category management\n'
+                '• Offline support',
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Need more help?',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              SizedBox(height: 8),
+              Text('Contact us at support@expensetracker.app'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),

@@ -1,47 +1,4 @@
-// lib/widgets/transactions/transaction_form.dart
-// UPDATE the TransactionForm class constructor to accept initial values:
-
-class TransactionForm extends StatefulWidget {
-  final Transaction? transaction;
-  final String? initialTitle;
-  final double? initialAmount;
-  final TransactionType? initialType;
-  final String? initialCategoryId;
-  final String? initialNotes;
-  
-  const TransactionForm({
-    super.key, 
-    this.transaction,
-    this.initialTitle,
-    this.initialAmount,
-    this.initialType,
-    this.initialCategoryId,
-    this.initialNotes,
-  });
-
-  @override
-  State<TransactionForm> createState() => _TransactionFormState();
-}
-
-// Then in _TransactionFormState initState, add:
-@override
-void initState() {
-  super.initState();
-  _loadCategories();
-  
-  if (widget.transaction != null) {
-    _populateForm();
-  } else if (widget.initialTitle != null || widget.initialAmount != null) {
-    // Populate with initial values for pending MPESA
-    _titleController.text = widget.initialTitle ?? '';
-    if (widget.initialAmount != null) {
-      _amountController.text = widget.initialAmount.toString();
-    }
-    _type = widget.initialType ?? TransactionType.expense;
-    _selectedCategoryId = widget.initialCategoryId;
-    _notesController.text = widget.initialNotes ?? '';
-  }
-}// lib/widgets/mpesa/pending_mpesa_page.dart
+// lib/widgets/mpesa/pending_mpesa_page.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/pending_mpesa.dart';

@@ -1,8 +1,10 @@
+// lib/services/mpesa_service.dart
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'mpesa_parser.dart';
 import '../models/transaction.dart';
 import '../models/category.dart';
+import '../models/pending_mpesa.dart';
 
 class MpesaService {
   static const MethodChannel _channel = MethodChannel('com.example.crud/mpesa');
@@ -30,7 +32,6 @@ class MpesaService {
         print('Arguments type: ${call.arguments.runtimeType}');
         print('Arguments: ${call.arguments}');
         
-        // Handle both old boolean format and new map format
         if (call.arguments is bool) {
           print('Received boolean format');
           final confirmed = call.arguments as bool;
@@ -47,7 +48,6 @@ class MpesaService {
           
           if (confirmed && _pendingTransaction != null) {
             print('Creating updated transaction');
-            // Create updated transaction with edited data
             final updatedTransaction = MpesaTransaction(
               title: data['title'] as String? ?? _pendingTransaction!.title,
               amount: (data['amount'] as num?)?.toDouble() ?? _pendingTransaction!.amount,
@@ -88,38 +88,61 @@ class MpesaService {
       return;
     }
 
-    // Store pending transaction
+    // Save as pending message FIRST (before anything else)
+    await _savePendingMessage(sender, message, mpesaTransaction);
+
+    // Store pending transaction for overlay
     _pendingTransaction = mpesaTransaction;
 
     // Check overlay permission
     final hasPermission = await hasOverlayPermission();
     if (!hasPermission) {
-      print('No overlay permission - saving transaction directly');
-      await _saveTransaction(mpesaTransaction);
-      return;
+      print('No overlay permission - transaction saved as pending');
+      return; // Don't auto-save, just keep as pending
     }
 
     // Show overlay
     await _showTransactionOverlay(mpesaTransaction, sender);
   }
 
+  static Future<void> _savePendingMessage(
+    String sender,
+    String message,
+    MpesaTransaction mpesaTransaction,
+  ) async {
+    try {
+      // Save to pending_mpesa table
+      await PendingMpesa.create(
+        rawMessage: message,
+        sender: sender,
+        transactionCode: mpesaTransaction.transactionCode,
+        amount: mpesaTransaction.amount,
+        type: mpesaTransaction.type,
+        parsedTitle: mpesaTransaction.title,
+        receivedAt: mpesaTransaction.date,
+      );
+      
+      print('Saved pending MPESA message: ${mpesaTransaction.transactionCode}');
+    } catch (e) {
+      print('Error saving pending MPESA message: $e');
+    }
+  }
+
   static Future<void> _saveTransaction(
     MpesaTransaction mpesaTransaction, {
     String? customNotes,
-    String? categoryId,  // ADD THIS PARAMETER
+    String? categoryId,
   }) async {
     try {
       print('Attempting to save transaction: ${mpesaTransaction.title}');
       
       Category? mpesaCategory;
       
-      // Use provided categoryId if available
       if (categoryId != null) {
         mpesaCategory = await Category.getById(categoryId);
         print('Using selected category: ${mpesaCategory?.name}');
       }
       
-      // Fall back to finding or creating MPESA category
       if (mpesaCategory == null) {
         final categories = await Category.watchUserCategories().first;
         
@@ -140,7 +163,6 @@ class MpesaService {
         }
       }
 
-      // Use custom notes if provided, otherwise use default
       final notes = customNotes ?? 
           'Auto-detected from MPESA SMS\nCode: ${mpesaTransaction.transactionCode}';
 
@@ -157,6 +179,14 @@ class MpesaService {
       );
 
       print('Transaction saved successfully: ${transaction.id}');
+      
+      // IMPORTANT: Remove from pending messages after successful save
+      if (mpesaTransaction.transactionCode.isNotEmpty) {
+        await PendingMpesa.deleteByTransactionCode(
+          mpesaTransaction.transactionCode,
+        );
+        print('Removed from pending messages');
+      }
     } catch (e, stackTrace) {
       print('Error saving transaction: $e');
       print('Stack trace: $stackTrace');
@@ -169,17 +199,14 @@ class MpesaService {
     String sender,
   ) async {
     try {
-      // Load categories from Flutter
       final categories = await Category.watchUserCategories().first;
       
-      // Filter categories based on transaction type
       final filteredCategories = categories.where((cat) => 
         cat.type == transaction.type || cat.type == 'both'
       ).toList();
       
       print('Sending ${filteredCategories.length} categories to overlay');
       
-      // Convert categories to map format for Kotlin
       final categoriesData = filteredCategories.map((cat) => {
         'id': cat.id,
         'name': cat.name,
@@ -195,12 +222,11 @@ class MpesaService {
         'sender': sender,
         'transactionCode': transaction.transactionCode,
         'rawMessage': transaction.rawMessage,
-        'categories': categoriesData,  // ADD THIS
+        'categories': categoriesData,
       });
     } catch (e) {
       print('Error showing overlay: $e');
-      // Fallback: save directly if overlay fails
-      await _saveTransaction(transaction);
+      // If overlay fails, message is already saved as pending
     }
   }
 
@@ -260,11 +286,10 @@ class MpesaService {
             rawMessage: '',
           );
           
-          // Save with custom notes and categoryId if available
           await _saveTransaction(
             mpesaTransaction,
             customNotes: data['notes'] as String?,
-            categoryId: data['categoryId'] as String?,  // ADD THIS LINE
+            categoryId: data['categoryId'] as String?,
           );
           print('Processed pending transaction: ${mpesaTransaction.title}');
           

@@ -1,0 +1,648 @@
+// lib/widgets/settings/settings_page.dart
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/mpesa_service.dart';
+import '../../powersync.dart';
+import '../auth/login_page.dart';
+import '../common/status_app_bar.dart';
+import '../mpesa/pending_mpesa_page.dart';
+import '../../models/pending_mpesa.dart';
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  bool _smsPermission = false;
+  bool _overlayPermission = false;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPermissions();
+  }
+
+  Future<void> _loadPermissions() async {
+    final sms = await MpesaService.hasSmsPermission();
+    final overlay = await MpesaService.hasOverlayPermission();
+    
+    if (mounted) {
+      setState(() {
+        _smsPermission = sms;
+        _overlayPermission = overlay;
+      });
+    }
+  }
+
+  Stream<int> _watchPendingCount() async* {
+    await for (final messages in PendingMpesa.watchUserPendingMessages()) {
+      yield messages.length;
+    }
+  }
+
+  Future<void> _handleSignOut() async {
+    final shouldSignOut = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSignOut == true && mounted) {
+      setState(() => _isLoading = true);
+      
+      try {
+        await logout();
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error signing out: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleStartAfresh() async {
+    // Show warning dialog first
+    final shouldProceed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
+            const SizedBox(width: 8),
+            const Text('Start Afresh'),
+          ],
+        ),
+        content: const Text(
+          'This will permanently delete ALL your transactions. '
+          'Your categories will be preserved.\n\n'
+          'This action cannot be undone!\n\n'
+          'Enter your password to confirm.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldProceed != true || !mounted) return;
+
+    // Show password dialog
+    final password = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        final passwordController = TextEditingController();
+        return AlertDialog(
+          title: const Text('Verify Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter your password to confirm deletion of all transactions:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                ),
+                onSubmitted: (value) {
+                  if (value.trim().isNotEmpty) {
+                    Navigator.pop(context, value);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, null);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final pass = passwordController.text;
+                Navigator.pop(context, pass.trim().isNotEmpty ? pass : null);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Verify'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (password == null || password.trim().isEmpty || !mounted) return;
+
+    // Start loading
+    setState(() => _isLoading = true);
+
+    // Verify password
+    bool passwordValid = false;
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      // Verify password by attempting to sign in
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: user.email!,
+        password: password,
+      );
+
+      passwordValid = response.session != null;
+    } on AuthException catch (e) {
+      passwordValid = false;
+      print('Auth error: $e');
+    } catch (e) {
+      passwordValid = false;
+      print('Error verifying password: $e');
+    }
+
+    // Stop loading and check if password was valid
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (!passwordValid) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Incorrect password. Operation cancelled.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Password is correct, show final confirmation
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Final Confirmation'),
+        content: const Text(
+          'Are you absolutely sure? This will delete ALL transactions permanently.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Yes, Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    // Start loading for deletion
+    setState(() => _isLoading = true);
+
+    // Delete all transactions
+    try {
+      await _deleteAllTransactions();
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All transactions deleted successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        Navigator.pop(context); // Go back to main page
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting transactions: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteAllTransactions() async {
+    final userId = getUserId();
+    if (userId == null) throw Exception('User not logged in');
+
+    // Delete all transactions for the current user
+    await db.execute('''
+      DELETE FROM transactions WHERE user_id = ?
+    ''', [userId]);
+
+    print('All transactions deleted for user: $userId');
+  }
+
+  Future<void> _requestSmsPermission() async {
+    final granted = await MpesaService.requestSmsPermission();
+    if (mounted) {
+      setState(() => _smsPermission = granted);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            granted 
+              ? 'SMS permission granted' 
+              : 'SMS permission denied',
+          ),
+          backgroundColor: granted ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _requestOverlayPermission() async {
+    await MpesaService.requestOverlayPermission();
+    // Wait a bit for the user to grant permission
+    await Future.delayed(const Duration(seconds: 1));
+    await _loadPermissions();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+    
+    return Scaffold(
+      appBar: const StatusAppBar(title: Text('Settings')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                // User Profile Section
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 40,
+                          backgroundColor: Colors.blue.shade100,
+                          child: Icon(
+                            Icons.person,
+                            size: 48,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          user?.email ?? 'No email',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'User ID: ${user?.id.substring(0, 8)}...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Permissions Section
+                Text(
+                  'Permissions',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: Icon(
+                          Icons.message,
+                          color: _smsPermission ? Colors.green : Colors.grey,
+                        ),
+                        title: const Text('SMS Permission'),
+                        subtitle: Text(
+                          _smsPermission
+                              ? 'Enabled - Can read MPESA SMS'
+                              : 'Disabled - Enable to auto-detect transactions',
+                        ),
+                        trailing: Switch(
+                          value: _smsPermission,
+                          onChanged: (value) async {
+                            if (value) {
+                              await _requestSmsPermission();
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please disable in system settings',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: Icon(
+                          Icons.layers,
+                          color: _overlayPermission ? Colors.green : Colors.grey,
+                        ),
+                        title: const Text('Overlay Permission'),
+                        subtitle: Text(
+                          _overlayPermission
+                              ? 'Enabled - Can show transaction popups'
+                              : 'Disabled - Enable to see transaction confirmations',
+                        ),
+                        trailing: Switch(
+                          value: _overlayPermission,
+                          onChanged: (value) async {
+                            if (value) {
+                              await _requestOverlayPermission();
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please disable in system settings',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // App Settings Section
+                Text(
+                  'App Settings',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      StreamBuilder<int>(
+                        stream: _watchPendingCount(),
+                        builder: (context, snapshot) {
+                          final count = snapshot.data ?? 0;
+                          return ListTile(
+                            leading: Badge(
+                              label: Text('$count'),
+                              isLabelVisible: count > 0,
+                              child: const Icon(Icons.pending_actions),
+                            ),
+                            title: const Text('Pending MPESA Messages'),
+                            subtitle: Text(
+                              count == 0
+                                  ? 'No pending messages'
+                                  : '$count ${count == 1 ? 'message' : 'messages'} waiting',
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => const PendingMpesaPage(),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.sync),
+                        title: const Text('Sync Status'),
+                        subtitle: const Text('View database sync status'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          _showSyncStatus();
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.info_outline),
+                        title: const Text('About'),
+                        subtitle: const Text('Version 1.0.0'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          _showAboutDialog();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Danger Zone
+                Text(
+                  'Danger Zone',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red[700],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.delete_sweep, color: Colors.orange),
+                        title: const Text(
+                          'Start Afresh',
+                          style: TextStyle(color: Colors.orange),
+                        ),
+                        subtitle: const Text('Delete all transactions and start over'),
+                        trailing: const Icon(Icons.chevron_right, color: Colors.orange),
+                        onTap: _handleStartAfresh,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.logout, color: Colors.red),
+                        title: const Text(
+                          'Sign Out',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                        subtitle: const Text('Sign out of your account'),
+                        trailing: const Icon(Icons.chevron_right, color: Colors.red),
+                        onTap: _handleSignOut,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 48),
+              ],
+            ),
+    );
+  }
+
+  void _showSyncStatus() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sync Status'),
+        content: StreamBuilder(
+          stream: db.statusStream,
+          builder: (context, snapshot) {
+            final status = snapshot.data ?? db.currentStatus;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildStatusRow(
+                  'Connected',
+                  status.connected ? 'Yes' : 'No',
+                  status.connected ? Colors.green : Colors.red,
+                ),
+                const SizedBox(height: 8),
+                _buildStatusRow(
+                  'Uploading',
+                  status.uploading ? 'Yes' : 'No',
+                  status.uploading ? Colors.blue : Colors.grey,
+                ),
+                const SizedBox(height: 8),
+                _buildStatusRow(
+                  'Downloading',
+                  status.downloading ? 'Yes' : 'No',
+                  status.downloading ? Colors.blue : Colors.grey,
+                ),
+                const SizedBox(height: 8),
+                if (status.anyError != null) ...[
+                  _buildStatusRow(
+                    'Error',
+                    status.anyError.toString(),
+                    Colors.red,
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusRow(String label, String value, Color color) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+        Text(
+          value,
+          style: TextStyle(color: color, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+
+  void _showAboutDialog() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'Expense Tracker',
+      applicationVersion: '1.0.0',
+      applicationIcon: Icon(
+        Icons.account_balance_wallet,
+        size: 48,
+        color: Colors.blue.shade700,
+      ),
+      children: [
+        const SizedBox(height: 16),
+        const Text(
+          'A modern expense tracking app with automatic MPESA transaction detection.',
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Built with Flutter and PowerSync for real-time synchronization.',
+        ),
+      ],
+    );
+  }
+}

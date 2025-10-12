@@ -11,79 +11,80 @@ class TransactionList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Expenses'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _showAddTransaction(context),
-          ),
-        ],
-      ),
-      body: StreamBuilder<List<Transaction>>(
-        stream: Transaction.watchUserTransactions(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    return StreamBuilder<List<Transaction>>(
+      stream: Transaction.watchUserTransactions(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          final transactions = snapshot.data ?? [];
-
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        if (snapshot.hasError) {
+          return Center(
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // User Profile Header
-                _buildProfileHeader(),
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
                 const SizedBox(height: 16),
-                
-                // Spending Cards
-                Expanded(
-                  child: transactions.isEmpty
-                      ? _buildEmptyState(context)
-                      : RefreshIndicator(
-                          onRefresh: () async {
-                            // Trigger a rebuild by waiting a moment
-                            await Future.delayed(const Duration(milliseconds: 500));
-                          },
-                          child: ListView(
-                            padding: EdgeInsets.zero,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: [
-                              _buildFinancialCard(
-                                context,
-                                title: 'Today',
-                                transactions: transactions,
-                                period: SpendingPeriod.today,
-                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.today),
-                              ),
-                              const SizedBox(height: 16),
-                              _buildFinancialCard(
-                                context,
-                                title: 'This Week',
-                                transactions: transactions,
-                                period: SpendingPeriod.week,
-                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.week),
-                              ),
-                              const SizedBox(height: 16),
-                              _buildFinancialCard(
-                                context,
-                                title: 'This Month',
-                                transactions: transactions,
-                                period: SpendingPeriod.month,
-                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.month),
-                              ),
-                              const SizedBox(height: 80), // Bottom padding for nav bar
-                            ],
-                          ),
-                        ),
-                ),
+                Text('Error: ${snapshot.error}'),
               ],
             ),
           );
-        },
-      ),
+        }
+
+        final transactions = snapshot.data ?? [];
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Column(
+            children: [
+              // User Profile Header
+              _buildProfileHeader(),
+              const SizedBox(height: 16),
+              
+              // Spending Cards
+              Expanded(
+                child: transactions.isEmpty
+                    ? _buildEmptyState(context)
+                    : RefreshIndicator(
+                        onRefresh: () async {
+                          await Future.delayed(const Duration(milliseconds: 500));
+                        },
+                        child: ListView(
+                          padding: EdgeInsets.zero,
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            _buildFinancialCard(
+                              context,
+                              title: 'Today',
+                              transactions: transactions,
+                              period: SpendingPeriod.today,
+                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.today),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildFinancialCard(
+                              context,
+                              title: 'This Week',
+                              transactions: transactions,
+                              period: SpendingPeriod.week,
+                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.week),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildFinancialCard(
+                              context,
+                              title: 'This Month',
+                              transactions: transactions,
+                              period: SpendingPeriod.month,
+                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.month),
+                            ),
+                            const SizedBox(height: 80),
+                          ],
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -134,11 +135,9 @@ class TransactionList extends StatelessWidget {
 
   Future<String> _getDisplayName() async {
     try {
-      // Try to get user email from Supabase
       final session = Supabase.instance.client.auth.currentSession;
       if (session?.user.email != null) {
         final email = session!.user.email!;
-        // Extract name before @ and capitalize
         final name = email.split('@').first;
         return _capitalizeWords(name.replaceAll('.', ' ').replaceAll('_', ' '));
       }
@@ -170,7 +169,7 @@ class TransactionList extends StatelessWidget {
         break;
       
       case SpendingPeriod.week:
-        startDate = today.subtract(Duration(days: today.weekday - 1)); // Monday
+        startDate = today.subtract(Duration(days: today.weekday - 1));
         endDate = today.add(const Duration(days: 1));
         title = 'This Week\'s Transactions';
         break;
@@ -187,7 +186,7 @@ class TransactionList extends StatelessWidget {
           t.date.isAfter(startDate.subtract(const Duration(seconds: 1))) &&
           t.date.isBefore(endDate))
         .toList()
-      ..sort((a, b) => b.date.compareTo(a.date)); // Sort by date, newest first
+      ..sort((a, b) => b.date.compareTo(a.date));
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -207,17 +206,14 @@ class TransactionList extends StatelessWidget {
     required SpendingPeriod period,
     VoidCallback? onTap,
   }) {
-    // Calculate current period
     final currentExpenses = _calculateAmount(transactions, period, TransactionType.expense, isCurrent: true);
     final currentIncome = _calculateAmount(transactions, period, TransactionType.income, isCurrent: true);
     final currentNet = currentIncome - currentExpenses;
     
-    // Calculate previous period
     final previousExpenses = _calculateAmount(transactions, period, TransactionType.expense, isCurrent: false);
     final previousIncome = _calculateAmount(transactions, period, TransactionType.income, isCurrent: false);
     final previousNet = previousIncome - previousExpenses;
     
-    // Calculate net change percentage
     final netPercentage = previousNet != 0 
         ? ((currentNet - previousNet) / previousNet.abs() * 100).abs()
         : 0.0;
@@ -237,7 +233,6 @@ class TransactionList extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with title and comparison
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -251,11 +246,7 @@ class TransactionList extends StatelessWidget {
                 if (previousNet != 0)
                   Row(
                     children: [
-                      Icon(
-                        arrowIcon,
-                        size: 16,
-                        color: netColor,
-                      ),
+                      Icon(arrowIcon, size: 16, color: netColor),
                       const SizedBox(width: 4),
                       Text(
                         '${netPercentage.toStringAsFixed(0)}% $comparisonText',
@@ -271,7 +262,6 @@ class TransactionList extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             
-            // Income Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -317,7 +307,6 @@ class TransactionList extends StatelessWidget {
             
             const SizedBox(height: 16),
             
-            // Expense Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -362,13 +351,9 @@ class TransactionList extends StatelessWidget {
             ),
             
             const SizedBox(height: 16),
-            
-            // Divider
             Divider(color: Colors.grey[300], thickness: 1),
-            
             const SizedBox(height: 12),
             
-            // Net Balance Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -391,7 +376,6 @@ class TransactionList extends StatelessWidget {
               ],
             ),
             
-            // Previous period comparison
             if (previousNet != 0) ...[
               const SizedBox(height: 8),
               Text(
@@ -482,7 +466,6 @@ class TransactionList extends StatelessWidget {
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
-
   Widget _buildEmptyState(BuildContext context) {
     return Center(
       child: Column(
@@ -518,7 +501,7 @@ class TransactionList extends StatelessWidget {
 
 enum SpendingPeriod { today, week, month }
 
-// Period Details Page (works for Today, Week, and Month)
+// Period Details Page
 class PeriodDetailsPage extends StatelessWidget {
   final String title;
   final List<Transaction> transactions;
@@ -571,7 +554,6 @@ class PeriodDetailsPage extends StatelessWidget {
             ),
             child: Column(
               children: [
-                // Income and Expenses Row
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -699,7 +681,6 @@ class PeriodDetailsPage extends StatelessWidget {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Date Header
                           Padding(
                             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
                             child: Row(
@@ -744,7 +725,6 @@ class PeriodDetailsPage extends StatelessWidget {
                             ),
                           ),
                           
-                          // Transactions for this date
                           ...dayTransactions.map((transaction) =>
                             TransactionListItem(transaction: transaction)
                           ),
