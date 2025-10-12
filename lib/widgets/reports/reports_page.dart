@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../models/transaction.dart';
 import '../../models/category.dart';
 import '../common/status_app_bar.dart';
+import '../transactions/transaction_form.dart';
 
 class ReportsPage extends StatefulWidget {
   const ReportsPage({super.key});
@@ -969,67 +970,98 @@ class _ReportsPageState extends State<ReportsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Recent Transactions',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Recent Transactions',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (recentTransactions.isNotEmpty)
+                  Text(
+                    'Tap to edit',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 16),
-            ...recentTransactions.map((transaction) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: transaction.type == TransactionType.income
-                          ? Colors.green.withOpacity(0.1)
-                          : Colors.red.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
+            ...recentTransactions.map((transaction) => InkWell(
+              onTap: () => _editTransaction(context, transaction),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: transaction.type == TransactionType.income
+                            ? Colors.green.withOpacity(0.1)
+                            : Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        transaction.type == TransactionType.income
+                            ? Icons.trending_up
+                            : Icons.trending_down,
+                        color: transaction.type == TransactionType.income
+                            ? Colors.green
+                            : Colors.red,
+                      ),
                     ),
-                    child: Icon(
-                      transaction.type == TransactionType.income
-                          ? Icons.trending_up
-                          : Icons.trending_down,
-                      color: transaction.type == TransactionType.income
-                          ? Colors.green
-                          : Colors.red,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            transaction.title,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          Text(
+                            DateFormat('EEE, MMM dd').format(transaction.date),
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          transaction.title,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        Text(
-                          // date with day of the weeek
-                          DateFormat('EEE, MMM dd').format(transaction.date),
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                        ),
-                      ],
+                    Text(
+                      '\$${NumberFormat('#,##0.00').format(transaction.amount)}',                    
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: transaction.type == TransactionType.income
+                            ? Colors.green
+                            : Colors.red,
+                      ),
                     ),
-                  ),
-                  Text(
-                    '\$${NumberFormat('#,##0.00').format(transaction.amount)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: transaction.type == TransactionType.income
-                          ? Colors.green
-                          : Colors.red,
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 20,
+                      color: Colors.grey[400],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             )),
           ],
         ),
+      ),
+    );
+  }
+
+  void _editTransaction(BuildContext context, Transaction transaction) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => TransactionForm(transaction: transaction),
       ),
     );
   }
