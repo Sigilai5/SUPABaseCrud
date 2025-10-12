@@ -1,5 +1,8 @@
 // lib/widgets/transactions/transaction_form.dart
-// UPDATE the TransactionForm class constructor to accept initial values:
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../../models/transaction.dart';
+import '../../models/category.dart';
 
 class TransactionForm extends StatefulWidget {
   final Transaction? transaction;
@@ -23,459 +26,385 @@ class TransactionForm extends StatefulWidget {
   State<TransactionForm> createState() => _TransactionFormState();
 }
 
-// Then in _TransactionFormState initState, add:
-@override
-void initState() {
-  super.initState();
-  _loadCategories();
-  
-  if (widget.transaction != null) {
-    _populateForm();
-  } else if (widget.initialTitle != null || widget.initialAmount != null) {
-    // Populate with initial values for pending MPESA
-    _titleController.text = widget.initialTitle ?? '';
-    if (widget.initialAmount != null) {
-      _amountController.text = widget.initialAmount.toString();
-    }
-    _type = widget.initialType ?? TransactionType.expense;
-    _selectedCategoryId = widget.initialCategoryId;
-    _notesController.text = widget.initialNotes ?? '';
-  }
-}// lib/widgets/mpesa/pending_mpesa_page.dart
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import '../../models/pending_mpesa.dart';
-import '../../models/transaction.dart';
-import '../../models/category.dart';
-import '../common/status_app_bar.dart';
-import '../transactions/transaction_form.dart';
+class _TransactionFormState extends State<TransactionForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _amountController = TextEditingController();
+  final _notesController = TextEditingController();
 
-class PendingMpesaPage extends StatelessWidget {
-  const PendingMpesaPage({super.key});
+  TransactionType _type = TransactionType.expense;
+  String? _selectedCategoryId;
+  DateTime _selectedDate = DateTime.now();
+  List<Category> _categories = [];
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+    
+    if (widget.transaction != null) {
+      _populateForm();
+    } else if (widget.initialTitle != null || widget.initialAmount != null) {
+      // Populate with initial values for pending MPESA
+      _titleController.text = widget.initialTitle ?? '';
+      if (widget.initialAmount != null) {
+        _amountController.text = widget.initialAmount.toString();
+      }
+      _type = widget.initialType ?? TransactionType.expense;
+      _selectedCategoryId = widget.initialCategoryId;
+      _notesController.text = widget.initialNotes ?? '';
+    }
+  }
+
+  void _populateForm() {
+    final transaction = widget.transaction!;
+    _titleController.text = transaction.title;
+    _amountController.text = transaction.amount.toString();
+    _type = transaction.type;
+    _selectedCategoryId = transaction.categoryId;
+    _selectedDate = transaction.date;
+    _notesController.text = transaction.notes ?? '';
+  }
+
+  Future<void> _loadCategories() async {
+    final categories = await Category.watchUserCategories().first;
+    setState(() {
+      _categories = categories;
+      // If no category selected and we have categories, select the first appropriate one
+      if (_selectedCategoryId == null && _categories.isNotEmpty) {
+        final appropriateCategories = _categories
+            .where((cat) => cat.type == _type.name || cat.type == 'both')
+            .toList();
+        if (appropriateCategories.isNotEmpty) {
+          _selectedCategoryId = appropriateCategories.first.id;
+        }
+      }
+    });
+  }
+
+  Future<void> _selectDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    
+    if (picked != null && picked != _selectedDate) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  List<Category> get _filteredCategories {
+    return _categories
+        .where((cat) => cat.type == _type.name || cat.type == 'both')
+        .toList();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    
+    if (_selectedCategoryId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a category'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      final amount = double.parse(_amountController.text);
+      
+      if (widget.transaction == null) {
+        // Create new transaction
+        await Transaction.create(
+          title: _titleController.text.trim(),
+          amount: amount,
+          type: _type,
+          categoryId: _selectedCategoryId!,
+          date: _selectedDate,
+          notes: _notesController.text.trim().isEmpty 
+              ? null 
+              : _notesController.text.trim(),
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transaction created successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.of(context).pop(true);
+        }
+      } else {
+        // Update existing transaction
+        await widget.transaction!.update(
+          title: _titleController.text.trim(),
+          amount: amount,
+          type: _type,
+          categoryId: _selectedCategoryId,
+          date: _selectedDate,
+          notes: _notesController.text.trim().isEmpty 
+              ? null 
+              : _notesController.text.trim(),
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transaction updated successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.of(context).pop(true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _delete() async {
+    if (widget.transaction == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Transaction'),
+        content: const Text('Are you sure you want to delete this transaction?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _loading = true);
+
+    try {
+      await widget.transaction!.delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Transaction deleted'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const StatusAppBar(title: Text('Pending MPESA Messages')),
-      body: StreamBuilder<List<PendingMpesa>>(
-        stream: PendingMpesa.watchUserPendingMessages(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text('Error: ${snapshot.error}'),
-                ],
-              ),
-            );
-          }
-
-          final pendingMessages = snapshot.data ?? [];
-
-          if (pendingMessages.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.check_circle_outline, 
-                    size: 80, 
-                    color: Colors.green[300],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'All caught up!',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'No pending MPESA messages',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return Column(
-            children: [
-              // Summary Card
-              Container(
-                width: double.infinity,
+      appBar: AppBar(
+        title: Text(widget.transaction == null 
+            ? 'Add Transaction' 
+            : 'Edit Transaction'),
+        actions: [
+          if (widget.transaction != null)
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: _loading ? null : _delete,
+            ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Form(
+              key: _formKey,
+              child: ListView(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  border: Border(
-                    bottom: BorderSide(color: Colors.orange.shade200),
+                children: [
+                  // Type selector
+                  SegmentedButton<TransactionType>(
+                    segments: const [
+                      ButtonSegment(
+                        value: TransactionType.expense,
+                        label: Text('Expense'),
+                        icon: Icon(Icons.trending_down),
+                      ),
+                      ButtonSegment(
+                        value: TransactionType.income,
+                        label: Text('Income'),
+                        icon: Icon(Icons.trending_up),
+                      ),
+                    ],
+                    selected: {_type},
+                    onSelectionChanged: (Set<TransactionType> newSelection) {
+                      setState(() {
+                        _type = newSelection.first;
+                        // Reset category when type changes
+                        final appropriateCategories = _filteredCategories;
+                        if (appropriateCategories.isNotEmpty &&
+                            !appropriateCategories.any((cat) => cat.id == _selectedCategoryId)) {
+                          _selectedCategoryId = appropriateCategories.first.id;
+                        }
+                      });
+                    },
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.pending_actions, 
-                      color: Colors.orange.shade700,
-                      size: 32,
+                  const SizedBox(height: 24),
+
+                  // Title
+                  TextFormField(
+                    controller: _titleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Title',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.title),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${pendingMessages.length} Pending ${pendingMessages.length == 1 ? 'Message' : 'Messages'}',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.orange.shade900,
-                            ),
-                          ),
-                          Text(
-                            'Tap to add as transaction or dismiss',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.orange.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter a title';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Amount
+                  TextFormField(
+                    controller: _amountController,
+                    decoration: const InputDecoration(
+                      labelText: 'Amount',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.attach_money),
                     ),
-                    if (pendingMessages.length > 1)
-                      TextButton(
-                        onPressed: () => _showClearAllDialog(context),
-                        child: Text(
-                          'Clear All',
-                          style: TextStyle(color: Colors.red.shade700),
-                        ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter an amount';
+                      }
+                      if (double.tryParse(value) == null) {
+                        return 'Please enter a valid number';
+                      }
+                      if (double.parse(value) <= 0) {
+                        return 'Amount must be greater than 0';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Category
+                  DropdownButtonFormField<String>(
+                    value: _selectedCategoryId,
+                    decoration: const InputDecoration(
+                      labelText: 'Category',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.category),
+                    ),
+                    items: _filteredCategories.map((category) {
+                      return DropdownMenuItem(
+                        value: category.id,
+                        child: Text(category.name),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() => _selectedCategoryId = value);
+                    },
+                    validator: (value) {
+                      if (value == null) {
+                        return 'Please select a category';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Date
+                  InkWell(
+                    onTap: _selectDate,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Date',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.calendar_today),
                       ),
-                  ],
-                ),
+                      child: Text(DateFormat('MMM dd, yyyy').format(_selectedDate)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Notes
+                  TextFormField(
+                    controller: _notesController,
+                    decoration: const InputDecoration(
+                      labelText: 'Notes (optional)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.note),
+                    ),
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Submit button
+                  ElevatedButton(
+                    onPressed: _loading ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: Text(
+                      widget.transaction == null 
+                          ? 'Add Transaction' 
+                          : 'Update Transaction',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ],
               ),
-
-              // Pending Messages List
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: pendingMessages.length,
-                  itemBuilder: (context, index) {
-                    final message = pendingMessages[index];
-                    return PendingMpesaCard(
-                      message: message,
-                      onAddTransaction: () => _addAsTransaction(context, message),
-                      onDismiss: () => _dismissMessage(context, message),
-                    );
-                  },
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _addAsTransaction(BuildContext context, PendingMpesa message) async {
-    // Get MPESA category
-    final categories = await Category.watchUserCategories().first;
-    Category? mpesaCategory;
-    
-    try {
-      mpesaCategory = categories.firstWhere(
-        (cat) => cat.name.toLowerCase() == 'mpesa',
-      );
-    } catch (e) {
-      // Create MPESA category if it doesn't exist
-      mpesaCategory = await Category.create(
-        name: 'MPESA',
-        type: 'both',
-        color: '#4CAF50',
-        icon: 'payments',
-      );
-    }
-
-    if (!context.mounted) return;
-
-    // Navigate to transaction form with pre-filled data
-    final result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => TransactionForm(
-          initialTitle: message.parsedTitle,
-          initialAmount: message.amount,
-          initialType: message.type == 'income' 
-            ? TransactionType.income 
-            : TransactionType.expense,
-          initialCategoryId: mpesaCategory?.id,
-          initialNotes: 'From MPESA SMS (${message.transactionCode})',
-        ),
-      ),
-    );
-
-    // If transaction was created, delete the pending message
-    if (result == true && context.mounted) {
-      await message.delete();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Transaction added successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _dismissMessage(BuildContext context, PendingMpesa message) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Dismiss Message'),
-        content: const Text(
-          'Are you sure you want to dismiss this message? '
-          'It will be permanently removed from pending messages.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
             ),
-            child: const Text('Dismiss'),
-          ),
-        ],
-      ),
     );
-
-    if (confirmed == true) {
-      await message.delete();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Message dismissed'),
-          ),
-        );
-      }
-    }
   }
-
-  Future<void> _showClearAllDialog(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear All Messages'),
-        content: const Text(
-          'Are you sure you want to dismiss all pending messages? '
-          'This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await PendingMpesa.deleteAll();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All pending messages cleared'),
-          ),
-        );
-      }
-    }
-  }
-}
-
-class PendingMpesaCard extends StatelessWidget {
-  final PendingMpesa message;
-  final VoidCallback onAddTransaction;
-  final VoidCallback onDismiss;
-
-  const PendingMpesaCard({
-    super.key,
-    required this.message,
-    required this.onAddTransaction,
-    required this.onDismiss,
-  });
 
   @override
-  Widget build(BuildContext context) {
-    final isIncome = message.type == 'income';
-    final color = isIncome ? Colors.green : Colors.red;
-    final icon = isIncome ? Icons.arrow_downward : Icons.arrow_upward;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header with amount and type
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: color.withOpacity(0.2),
-                  child: Icon(icon, color: color),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        message.parsedTitle ?? 'MPESA Transaction',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        DateFormat('EEE, MMM dd, yyyy • h:mm a')
-                            .format(message.receivedAt),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (message.amount != null)
-                  Text(
-                    'KES ${NumberFormat('#,##0').format(message.amount)}',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: color,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Message content
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.sms, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 8),
-                    Text(
-                      'From: ${message.sender}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                if (message.transactionCode != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.tag, size: 16, color: Colors.grey[600]),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Code: ${message.transactionCode}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[700],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    message.rawMessage,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[700],
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Action buttons
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton.icon(
-                  onPressed: onDismiss,
-                  icon: const Icon(Icons.close, size: 18),
-                  label: const Text('Dismiss'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey[700],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: onAddTransaction,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add Transaction'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void dispose() {
+    _titleController.dispose();
+    _amountController.dispose();
+    _notesController.dispose();
+    super.dispose();
   }
 }
