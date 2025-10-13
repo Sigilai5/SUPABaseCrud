@@ -7,6 +7,7 @@ import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
 import '../mpesa/pending_mpesa_page.dart';
 import '../../models/pending_mpesa.dart';
+import '../../debug/schema_checker_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -327,6 +328,62 @@ class _SettingsPageState extends State<SettingsPage> {
     await _loadPermissions();
   }
 
+  Future<void> _handleClearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Cache'),
+        content: const Text(
+          'This will clear all cached data and force a fresh sync from the server. '
+          'You will not lose any data.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear Cache'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Disconnect and clear local database
+      await db.disconnectAndClear();
+      
+      // Reconnect with fresh sync
+      final connector = SupabaseConnector();
+      db.connect(connector: connector);
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cache cleared! Syncing fresh data...'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error clearing cache: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
@@ -502,6 +559,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       const Divider(height: 1),
                       ListTile(
+                        leading: const Icon(Icons.clear_all),
+                        title: const Text('Clear Cache'),
+                        subtitle: const Text('Clear local cache and re-sync'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _handleClearCache,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
                         leading: const Icon(Icons.info_outline),
                         title: const Text('About'),
                         subtitle: const Text('Version 1.0.0'),
@@ -511,6 +576,33 @@ class _SettingsPageState extends State<SettingsPage> {
                         },
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Developer Options
+                Text(
+                  'Developer Options',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.bug_report, color: Colors.purple),
+                    title: const Text('Schema Checker'),
+                    subtitle: const Text('Debug database schema'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const SchemaCheckerPage(),
+                        ),
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -596,6 +688,22 @@ class _SettingsPageState extends State<SettingsPage> {
                     Colors.red,
                   ),
                 ],
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+                Text(
+                  'Last Synced',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                Text(
+                  status.lastSyncedAt != null
+                      ? status.lastSyncedAt.toString()
+                      : 'Never',
+                  style: const TextStyle(fontSize: 12),
+                ),
               ],
             );
           },
@@ -615,9 +723,14 @@ class _SettingsPageState extends State<SettingsPage> {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
-        Text(
-          value,
-          style: TextStyle(color: color, fontWeight: FontWeight.bold),
+        Flexible(
+          child: Text(
+            value,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.right,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
         ),
       ],
     );
@@ -642,6 +755,24 @@ class _SettingsPageState extends State<SettingsPage> {
         const Text(
           'Built with Flutter and PowerSync for real-time synchronization.',
         ),
+        const SizedBox(height: 16),
+        const Text(
+          'Features:',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text('• Automatic MPESA SMS detection'),
+        const Text('• Real-time sync across devices'),
+        const Text('• Detailed spending reports'),
+        const Text('• Category management'),
+        const Text('• Offline support'),
+        const SizedBox(height: 16),
+        const Text(
+          'Need help?',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text('Contact: support@expensetracker.app'),
       ],
     );
   }
