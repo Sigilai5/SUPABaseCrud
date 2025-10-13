@@ -12,6 +12,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.crud/mpesa"
@@ -83,6 +84,15 @@ class MainActivity : FlutterActivity() {
                     clearPendingTransactions()
                     result.success(null)
                 }
+                "removePendingTransaction" -> {
+                    val transactionCode = call.argument<String>("transactionCode")
+                    if (transactionCode != null) {
+                        removePendingTransaction(transactionCode)
+                        result.success(null)
+                    } else {
+                        result.error("INVALID_ARGUMENT", "transactionCode is required", null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -108,7 +118,9 @@ class MainActivity : FlutterActivity() {
                     "amount" to jsonObject.getDouble("amount"),
                     "type" to jsonObject.getString("type"),
                     "transactionCode" to jsonObject.getString("transactionCode"),
-                    "timestamp" to jsonObject.getLong("timestamp")
+                    "timestamp" to jsonObject.getLong("timestamp"),
+                    "categoryId" to jsonObject.optString("categoryId", ""),
+                    "notes" to jsonObject.optString("notes", "")
                 )
                 transactions.add(transaction)
             }
@@ -129,6 +141,43 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "Cleared all pending transactions")
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing pending transactions: ${e.message}")
+        }
+    }
+
+    private fun removePendingTransaction(transactionCode: String) {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val jsonString = prefs.getString(PENDING_TRANSACTIONS, "[]") ?: "[]"
+
+            Log.d(TAG, "Removing transaction with code: $transactionCode")
+            Log.d(TAG, "Current JSON: $jsonString")
+
+            val jsonArray = JSONArray(jsonString)
+            val newArray = JSONArray()
+
+            var found = false
+            for (i in 0 until jsonArray.length()) {
+                val jsonObject = jsonArray.getJSONObject(i)
+                val code = jsonObject.optString("transactionCode", "")
+
+                if (code != transactionCode) {
+                    newArray.put(jsonObject)
+                } else {
+                    found = true
+                    Log.d(TAG, "Found and removing transaction: $code")
+                }
+            }
+
+            if (found) {
+                prefs.edit().putString(PENDING_TRANSACTIONS, newArray.toString()).apply()
+                Log.d(TAG, "Updated JSON: ${newArray.toString()}")
+                Log.d(TAG, "Successfully removed transaction $transactionCode")
+            } else {
+                Log.d(TAG, "Transaction $transactionCode not found in SharedPreferences")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing pending transaction: ${e.message}", e)
         }
     }
 

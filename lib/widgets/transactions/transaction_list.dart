@@ -11,80 +11,93 @@ class TransactionList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Transaction>>(
-      stream: Transaction.watchUserTransactions(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    return Scaffold(
+      body: StreamBuilder<List<Transaction>>(
+        stream: Transaction.watchUserTransactions(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-        if (snapshot.hasError) {
-          return Center(
+          if (snapshot.hasError) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  Text('Error: ${snapshot.error}'),
+                ],
+              ),
+            );
+          }
+
+          final transactions = snapshot.data ?? [];
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                // User Profile Header
+                _buildProfileHeader(),
                 const SizedBox(height: 16),
-                Text('Error: ${snapshot.error}'),
+                
+                // Spending Cards
+                Expanded(
+                  child: transactions.isEmpty
+                      ? _buildEmptyState(context)
+                      : RefreshIndicator(
+                          onRefresh: () async {
+                            await Future.delayed(const Duration(milliseconds: 500));
+                          },
+                          child: ListView(
+                            padding: EdgeInsets.zero,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              _buildFinancialCard(
+                                context,
+                                title: 'Today',
+                                transactions: transactions,
+                                period: SpendingPeriod.today,
+                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.today),
+                              ),
+                              const SizedBox(height: 16),
+                              _buildFinancialCard(
+                                context,
+                                title: 'This Week',
+                                transactions: transactions,
+                                period: SpendingPeriod.week,
+                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.week),
+                              ),
+                              const SizedBox(height: 16),
+                              _buildFinancialCard(
+                                context,
+                                title: 'This Month',
+                                transactions: transactions,
+                                period: SpendingPeriod.month,
+                                onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.month),
+                              ),
+                              const SizedBox(height: 80),
+                            ],
+                          ),
+                        ),
+                ),
               ],
             ),
           );
-        }
-
-        final transactions = snapshot.data ?? [];
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Column(
-            children: [
-              // User Profile Header
-              _buildProfileHeader(),
-              const SizedBox(height: 16),
-              
-              // Spending Cards
-              Expanded(
-                child: transactions.isEmpty
-                    ? _buildEmptyState(context)
-                    : RefreshIndicator(
-                        onRefresh: () async {
-                          await Future.delayed(const Duration(milliseconds: 500));
-                        },
-                        child: ListView(
-                          padding: EdgeInsets.zero,
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [
-                            _buildFinancialCard(
-                              context,
-                              title: 'Today',
-                              transactions: transactions,
-                              period: SpendingPeriod.today,
-                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.today),
-                            ),
-                            const SizedBox(height: 16),
-                            _buildFinancialCard(
-                              context,
-                              title: 'This Week',
-                              transactions: transactions,
-                              period: SpendingPeriod.week,
-                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.week),
-                            ),
-                            const SizedBox(height: 16),
-                            _buildFinancialCard(
-                              context,
-                              title: 'This Month',
-                              transactions: transactions,
-                              period: SpendingPeriod.month,
-                              onTap: () => _showPeriodDetails(context, transactions, SpendingPeriod.month),
-                            ),
-                            const SizedBox(height: 80),
-                          ],
-                        ),
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
+        },
+      ),
+      // Add Floating Action Button
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddTransaction(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Add Transaction'),
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+        elevation: 6,
+        tooltip: 'Add new transaction',
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 
@@ -484,6 +497,11 @@ class TransactionList extends StatelessWidget {
             onPressed: () => _showAddTransaction(context),
             icon: const Icon(Icons.add),
             label: const Text('Add Transaction'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
           ),
         ],
       ),
@@ -501,7 +519,7 @@ class TransactionList extends StatelessWidget {
 
 enum SpendingPeriod { today, week, month }
 
-// Period Details Page
+// Period Details Page (unchanged from before)
 class PeriodDetailsPage extends StatelessWidget {
   final String title;
   final List<Transaction> transactions;

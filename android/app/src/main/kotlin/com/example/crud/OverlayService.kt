@@ -34,6 +34,9 @@ class OverlayService : Service() {
     private var originalAmount: Double = 0.0
     private var originalType: String = "expense"
     private var selectedCategoryId: String? = null
+    private var originalSender: String = ""
+    private var originalRawMessage: String = ""
+    private var originalTitle: String = ""
 
     // UI Elements
     private lateinit var etTitle: EditText
@@ -226,16 +229,41 @@ class OverlayService : Service() {
         }
 
         overlayView.findViewById<Button>(R.id.btnDismiss).setOnClickListener {
-            Log.d(TAG, "Dismiss button clicked")
-            removeFromPendingTransactions()
+            Log.d(TAG, "=== Dismiss button clicked ===")
 
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
+
             if (engine != null) {
-                MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
-                    .invokeMethod("onTransactionConfirmed", mapOf("confirmed" to false))
+                // Send the full transaction data to Flutter so it can save to pending_mpesa table
+                val dismissData = mapOf(
+                    "confirmed" to false,
+                    "title" to originalTitle,
+                    "amount" to originalAmount,
+                    "type" to originalType,
+                    "transactionCode" to (transactionCode ?: "UNKNOWN"),
+                    "sender" to originalSender,
+                    "rawMessage" to originalRawMessage
+                )
+
+                Log.d(TAG, "Sending dismiss data to Flutter: $dismissData")
+
+                try {
+                    MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+                        .invokeMethod("onTransactionDismissed", dismissData)
+
+                    Log.d(TAG, "Dismiss notification sent to Flutter")
+                    Toast.makeText(this, "Transaction dismissed - saved to pending", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error sending dismiss to Flutter: ${e.message}", e)
+                    Toast.makeText(this, "Transaction dismissed", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Log.d(TAG, "Flutter not available - keeping in SharedPreferences for later")
+                // If Flutter isn't available, just leave it in SharedPreferences
+                // It will be handled when the app opens
+                Toast.makeText(this, "Transaction dismissed - will sync when app opens", Toast.LENGTH_SHORT).show()
             }
 
-            Toast.makeText(this, "Transaction dismissed", Toast.LENGTH_SHORT).show()
             stopSelf()
         }
     }
@@ -274,41 +302,28 @@ class OverlayService : Service() {
         }
     }
 
-    private fun removeFromPendingTransactions() {
-        try {
-            if (transactionCode != null) {
-                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val existingJson = prefs.getString(PENDING_TRANSACTIONS, "[]") ?: "[]"
-
-                val updatedJson = existingJson.replace(
-                    Regex("\\{[^}]*\"transactionCode\":\\s*\"$transactionCode\"[^}]*\\},?"),
-                    ""
-                ).replace(",]", "]").replace("[,", "[").replace(",,", ",")
-
-                prefs.edit().putString(PENDING_TRANSACTIONS, updatedJson).apply()
-                Log.d(TAG, "Removed transaction $transactionCode from pending list")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error removing pending transaction: ${e.message}", e)
-        }
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.let {
             val title = it.getStringExtra("title") ?: "Unknown"
             val amount = it.getDoubleExtra("amount", 0.0)
             val type = it.getStringExtra("type") ?: "expense"
             val sender = it.getStringExtra("sender") ?: "MPESA"
+            val rawMessage = it.getStringExtra("rawMessage") ?: ""
             transactionCode = it.getStringExtra("transactionCode")
+
+            // Store original data
+            originalTitle = title
+            originalAmount = amount
+            originalType = type
+            originalSender = sender
+            originalRawMessage = rawMessage
 
             Log.d(TAG, "=== Overlay Service Started ===")
             Log.d(TAG, "Title: $title")
             Log.d(TAG, "Amount: $amount")
             Log.d(TAG, "Type: $type")
-
-            // Store original data
-            originalAmount = amount
-            originalType = type
+            Log.d(TAG, "Sender: $sender")
+            Log.d(TAG, "Transaction Code: $transactionCode")
 
             // Get categories from intent
             val categoriesData = it.getSerializableExtra("categories") as? ArrayList<HashMap<String, Any>>

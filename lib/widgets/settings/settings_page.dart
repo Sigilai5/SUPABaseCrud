@@ -1,5 +1,6 @@
 // lib/widgets/settings/settings_page.dart
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/mpesa_service.dart';
 import '../../powersync.dart';
@@ -580,9 +581,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
 
-                // Developer Options
+                // Debug Section
                 Text(
-                  'Developer Options',
+                  'Debug',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -591,18 +592,184 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 8),
                 Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.bug_report, color: Colors.purple),
-                    title: const Text('Schema Checker'),
-                    subtitle: const Text('Debug database schema'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const SchemaCheckerPage(),
-                        ),
-                      );
-                    },
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.bug_report, color: Colors.orange),
+                        title: const Text('Pending in SharedPreferences'),
+                        subtitle: const Text('Check offline pending transactions'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () async {
+                          final pending = await MpesaService.getPendingTransactionsFromSharedPrefs();
+                          if (context.mounted) {
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Pending Transactions'),
+                                content: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Found ${pending.length} pending transactions in SharedPreferences',
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      if (pending.isEmpty)
+                                        const Text('No pending transactions')
+                                      else
+                                        ...pending.map((tx) => Padding(
+                                          padding: const EdgeInsets.only(bottom: 12),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  tx['title'] as String,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  'Amount: KES ${tx['amount']}',
+                                                  style: const TextStyle(fontSize: 12),
+                                                ),
+                                                Text(
+                                                  'Type: ${tx['type']}',
+                                                  style: const TextStyle(fontSize: 12),
+                                                ),
+                                                Text(
+                                                  'Code: ${tx['transactionCode']}',
+                                                  style: const TextStyle(fontSize: 12),
+                                                ),
+                                                Text(
+                                                  'Time: ${DateFormat('MMM dd, yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(tx['timestamp'] as int))}',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Colors.grey[600],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        )),
+                                    ],
+                                  ),
+                                ),
+                                actions: [
+                                  if (pending.isNotEmpty)
+                                    TextButton(
+                                      onPressed: () async {
+                                        Navigator.pop(context);
+                                        
+                                        // Show processing dialog
+                                        showDialog(
+                                          context: context,
+                                          barrierDismissible: false,
+                                          builder: (context) => const Center(
+                                            child: Card(
+                                              child: Padding(
+                                                padding: EdgeInsets.all(24),
+                                                child: Column(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    CircularProgressIndicator(),
+                                                    SizedBox(height: 16),
+                                                    Text('Processing transactions...'),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                        
+                                        await MpesaService.processPendingTransactions();
+                                        
+                                        if (context.mounted) {
+                                          Navigator.pop(context); // Close processing dialog
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('Processing complete! Check transactions list.'),
+                                              backgroundColor: Colors.green,
+                                            ),
+                                          );
+                                        }
+                                      },
+                                      child: const Text('Process Now'),
+                                    ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Close'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.sync, color: Colors.blue),
+                        title: const Text('Process Pending Transactions'),
+                        subtitle: const Text('Manually trigger processing'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () async {
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (context) => const Center(
+                              child: Card(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CircularProgressIndicator(),
+                                      SizedBox(height: 16),
+                                      Text('Processing pending transactions...'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+
+                          await MpesaService.processPendingTransactions();
+
+                          if (context.mounted) {
+                            Navigator.pop(context); // Close loading dialog
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Processing complete!'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.bug_report, color: Colors.purple),
+                        title: const Text('Schema Checker'),
+                        subtitle: const Text('Debug database schema'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const SchemaCheckerPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 24),

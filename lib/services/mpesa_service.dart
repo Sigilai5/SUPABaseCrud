@@ -72,6 +72,12 @@ class MpesaService {
         }
         _pendingTransaction = null;
         break;
+      
+      case 'onTransactionDismissed':
+        print('Handling transaction dismissal');
+        final data = Map<String, dynamic>.from(call.arguments);
+        await _handleTransactionDismissed(data);
+        break;
         
       default:
         print('Unknown method: ${call.method}');
@@ -128,22 +134,73 @@ class MpesaService {
     }
   }
 
+  static Future<void> _handleTransactionDismissed(Map<String, dynamic> data) async {
+    try {
+      print('=== Saving Dismissed Transaction to Pending ===');
+      print('Data: $data');
+      
+      // Extract transaction details from dismiss data
+      final title = data['title'] as String? ?? 'Unknown Transaction';
+      final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+      final type = data['type'] as String? ?? 'expense';
+      final transactionCode = data['transactionCode'] as String? ?? 'UNKNOWN';
+      final sender = data['sender'] as String? ?? 'MPESA';
+      final rawMessage = data['rawMessage'] as String? ?? '';
+      
+      // Save to pending_mpesa table so user can review it later
+      await PendingMpesa.create(
+        rawMessage: rawMessage,
+        sender: sender,
+        transactionCode: transactionCode,
+        amount: amount,
+        type: type,
+        parsedTitle: title,
+        receivedAt: DateTime.now(),
+      );
+      
+      print('✓ Dismissed transaction saved to pending_mpesa table');
+      
+      // Now remove from SharedPreferences
+      try {
+        if (transactionCode.isNotEmpty && transactionCode != 'UNKNOWN') {
+          await _channel.invokeMethod('removePendingTransaction', {
+            'transactionCode': transactionCode,
+          });
+          print('✓ Removed from SharedPreferences');
+        }
+      } catch (e) {
+        print('Note: Could not remove from SharedPreferences: $e');
+      }
+      
+      _pendingTransaction = null;
+      
+    } catch (e, stackTrace) {
+      print('✗ Error handling dismissed transaction: $e');
+      print('Stack trace: $stackTrace');
+    }
+  }
+
   static Future<void> _saveTransaction(
     MpesaTransaction mpesaTransaction, {
     String? customNotes,
     String? categoryId,
   }) async {
     try {
-      print('Attempting to save transaction: ${mpesaTransaction.title}');
+      print('=== Saving Transaction ===');
+      print('Title: ${mpesaTransaction.title}');
+      print('Amount: ${mpesaTransaction.amount}');
+      print('Type: ${mpesaTransaction.type}');
+      print('Category ID: $categoryId');
       
       Category? mpesaCategory;
       
       if (categoryId != null) {
         mpesaCategory = await Category.getById(categoryId);
-        print('Using selected category: ${mpesaCategory?.name}');
+        print('Using category: ${mpesaCategory?.name ?? "Not found"}');
       }
       
       if (mpesaCategory == null) {
+        print('Category not found or not provided, getting MPESA category...');
         final categories = await Category.watchUserCategories().first;
         
         try {
@@ -178,17 +235,35 @@ class MpesaService {
         notes: notes,
       );
 
-      print('Transaction saved successfully: ${transaction.id}');
+      print('✓ Transaction saved successfully with ID: ${transaction.id}');
       
-      // IMPORTANT: Remove from pending messages after successful save
+      // Remove from pending_mpesa table (if exists)
       if (mpesaTransaction.transactionCode.isNotEmpty) {
-        await PendingMpesa.deleteByTransactionCode(
-          mpesaTransaction.transactionCode,
-        );
-        print('Removed from pending messages');
+        try {
+          await PendingMpesa.deleteByTransactionCode(
+            mpesaTransaction.transactionCode,
+          );
+          print('✓ Removed from pending_mpesa table');
+        } catch (e) {
+          print('Note: Could not remove from pending_mpesa table: $e');
+          // This is OK - might not exist in the table
+        }
       }
+      
+      // Remove from SharedPreferences
+      try {
+        if (mpesaTransaction.transactionCode.isNotEmpty) {
+          await _channel.invokeMethod('removePendingTransaction', {
+            'transactionCode': mpesaTransaction.transactionCode,
+          });
+          print('✓ Removed from SharedPreferences');
+        }
+      } catch (e) {
+        print('Note: Could not remove from SharedPreferences: $e');
+      }
+      
     } catch (e, stackTrace) {
-      print('Error saving transaction: $e');
+      print('✗ Error saving transaction: $e');
       print('Stack trace: $stackTrace');
       rethrow;
     }
@@ -262,21 +337,64 @@ class MpesaService {
 
   static Future<void> processPendingTransactions() async {
     try {
-      print('Checking for pending transactions...');
+      print('=== Processing Pending Transactions ===');
       
       final List<dynamic>? pendingList = await _channel.invokeMethod('getPendingTransactions');
       
       if (pendingList == null || pendingList.isEmpty) {
-        print('No pending transactions found');
+        print('No pending transactions found in SharedPreferences');
         return;
       }
       
       print('Found ${pendingList.length} pending transactions to process');
       
+      // Track successful and failed transactions
+      int successCount = 0;
+      int failCount = 0;
+      
+      // Save each to the database
       for (var item in pendingList) {
         try {
           final Map<String, dynamic> data = Map<String, dynamic>.from(item);
           
+          print('Processing transaction: ${data['title']}');
+          
+          // Check if it has categoryId (from overlay) or needs default
+          String? categoryId = data['categoryId'] as String?;
+          
+          // Handle empty string as null
+          if (categoryId != null && categoryId.isEmpty) {
+            categoryId = null;
+          }
+          
+          if (categoryId == null) {
+            print('No categoryId provided, getting MPESA category...');
+            
+            // Get or create MPESA category
+            final categories = await Category.watchUserCategories().first;
+            Category? mpesaCategory;
+            
+            try {
+              mpesaCategory = categories.firstWhere(
+                (cat) => cat.name.toLowerCase() == 'mpesa',
+              );
+              print('Found existing MPESA category: ${mpesaCategory.id}');
+            } catch (e) {
+              print('MPESA category not found, creating new one...');
+              mpesaCategory = await Category.create(
+                name: 'MPESA',
+                type: 'both',
+                color: '#4CAF50',
+                icon: 'payments',
+              );
+              print('Created MPESA category: ${mpesaCategory.id}');
+            }
+            categoryId = mpesaCategory.id;
+          } else {
+            print('Using provided categoryId: $categoryId');
+          }
+          
+          // Create MpesaTransaction object
           final mpesaTransaction = MpesaTransaction(
             title: data['title'] as String,
             amount: (data['amount'] as num).toDouble(),
@@ -286,23 +404,53 @@ class MpesaService {
             rawMessage: '',
           );
           
+          // Get notes if available
+          String? notes = data['notes'] as String?;
+          if (notes != null && notes.isEmpty) {
+            notes = null;
+          }
+          
+          // Save to database
           await _saveTransaction(
             mpesaTransaction,
-            customNotes: data['notes'] as String?,
-            categoryId: data['categoryId'] as String?,
+            customNotes: notes,
+            categoryId: categoryId,
           );
-          print('Processed pending transaction: ${mpesaTransaction.title}');
           
-        } catch (e) {
-          print('Error processing individual transaction: $e');
+          successCount++;
+          print('✓ Successfully processed: ${mpesaTransaction.title}');
+          
+        } catch (e, stackTrace) {
+          failCount++;
+          print('✗ Error processing transaction: $e');
+          print('Stack trace: $stackTrace');
         }
       }
       
-      await _channel.invokeMethod('clearPendingTransactions');
-      print('Cleared all pending transactions from SharedPreferences');
+      print('=== Processing Complete ===');
+      print('Success: $successCount, Failed: $failCount');
       
+      // Only clear after processing (successful or not)
+      if (successCount > 0 || failCount > 0) {
+        await _channel.invokeMethod('clearPendingTransactions');
+        print('✓ Cleared all pending transactions from SharedPreferences');
+      }
+      
+    } catch (e, stackTrace) {
+      print('✗ Error in processPendingTransactions: $e');
+      print('Stack trace: $stackTrace');
+    }
+  }
+
+  // Debug method to view SharedPreferences content
+  static Future<List<Map<String, dynamic>>> getPendingTransactionsFromSharedPrefs() async {
+    try {
+      final List<dynamic>? result = await _channel.invokeMethod('getPendingTransactions');
+      if (result == null) return [];
+      return result.map((e) => Map<String, dynamic>.from(e)).toList();
     } catch (e) {
-      print('Error processing pending transactions: $e');
+      print('Error getting pending transactions: $e');
+      return [];
     }
   }
 
