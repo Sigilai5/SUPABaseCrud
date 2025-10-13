@@ -7,6 +7,8 @@ import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
+import 'widgets/mpesa/pending_mpesa_page.dart';
+import 'models/pending_mpesa.dart';
 
 void main() async {
   Logger.root.level = Level.INFO;
@@ -201,96 +203,141 @@ class AppDrawer extends StatelessWidget {
                 ],
               ),
             ),
-          ListTile(
-            leading: const Icon(Icons.list),
-            title: const Text('Transactions'),
-            onTap: () {
-              Navigator.pop(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.category),
-            title: const Text('Categories'),
-            onTap: () {
-              Navigator.pop(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.analytics),
-            title: const Text('Reports'),
-            onTap: () {
-              Navigator.pop(context);
-            },
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.settings),
-            title: const Text('Settings'),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const SettingsPage(),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.help_outline),
-            title: const Text('Help & Support'),
-            onTap: () {
-              Navigator.pop(context);
-              _showHelpDialog(context);
-            },
-          ),
-          const Divider(),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text(
-                'Sign Out',
-                style: TextStyle(color: Colors.red),
-              ),
-              onTap: () async {
-              Navigator.pop(context);
-              final shouldSignOut = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Sign Out'),
-                  content: const Text('Are you sure you want to sign out?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
+            
+            // Main Navigation Items
+            ListTile(
+              leading: const Icon(Icons.list),
+              title: const Text('Transactions'),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.category),
+              title: const Text('Categories'),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.analytics),
+              title: const Text('Reports'),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            
+            const Divider(),
+            
+            // Pending MPESA Messages with Badge
+            StreamBuilder<List<PendingMpesa>>(
+              stream: PendingMpesa.watchUserPendingMessages(),
+              builder: (context, snapshot) {
+                final count = snapshot.data?.length ?? 0;
+                
+                return ListTile(
+                  leading: Badge(
+                    label: Text('$count'),
+                    isLabelVisible: count > 0,
+                    backgroundColor: Colors.orange,
+                    child: const Icon(Icons.pending_actions, color: Colors.orange),
+                  ),
+                  title: const Text('Pending MPESA'),
+                  subtitle: Text(
+                    count == 0
+                        ? 'No pending messages'
+                        : '$count ${count == 1 ? 'message' : 'messages'} waiting',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: count > 0 ? Colors.orange.shade700 : Colors.grey,
                     ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const PendingMpesaPage(),
                       ),
-                      child: const Text('Sign Out'),
-                    ),
-                  ],
+                    );
+                  },
+                );
+              },
+            ),
+            
+            const Divider(),
+            
+            // Settings and Help
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const SettingsPage(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.help_outline),
+              title: const Text('Help & Support'),
+              onTap: () {
+                Navigator.pop(context);
+                _showHelpDialog(context);
+              },
+            ),
+            
+            const Divider(),
+            
+            // Sign Out
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: const Text(
+                  'Sign Out',
+                  style: TextStyle(color: Colors.red),
                 ),
-              );
-
-              if (shouldSignOut == true && context.mounted) {
-                await logout();
-                if (context.mounted) {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const LoginPage()),
-                    (route) => false,
+                onTap: () async {
+                  Navigator.pop(context);
+                  final shouldSignOut = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Sign Out'),
+                      content: const Text('Are you sure you want to sign out?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Sign Out'),
+                        ),
+                      ],
+                    ),
                   );
-                }
-              }
-            },
-          ),
 
-         ) ],
-
-      ),
+                  if (shouldSignOut == true && context.mounted) {
+                    await logout();
+                    if (context.mounted) {
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (context) => const LoginPage()),
+                        (route) => false,
+                      );
+                    }
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -314,7 +361,8 @@ class AppDrawer extends StatelessWidget {
                 '1. Enable SMS and Overlay permissions in Settings\n'
                 '2. Create categories for your transactions\n'
                 '3. Add transactions manually or let them auto-detect from MPESA SMS\n'
-                '4. View reports to track your spending',
+                '4. Check Pending MPESA for unrecorded transactions\n'
+                '5. View reports to track your spending',
               ),
               SizedBox(height: 16),
               Text(
@@ -324,6 +372,7 @@ class AppDrawer extends StatelessWidget {
               SizedBox(height: 8),
               Text(
                 '• Automatic MPESA transaction detection\n'
+                '• Pending MPESA messages review\n'
                 '• Real-time sync across devices\n'
                 '• Detailed spending reports\n'
                 '• Category management\n'

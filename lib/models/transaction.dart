@@ -1,6 +1,7 @@
 // lib/models/transaction.dart
 import 'package:powersync/sqlite3_common.dart' as sqlite;
 import '../powersync.dart';
+import '../services/user_preferences.dart';
 import 'schema.dart';
 
 enum TransactionType { income, expense }
@@ -15,6 +16,8 @@ class Transaction {
   final String? budgetId;
   final DateTime date;
   final String? notes;
+  final double? latitude;   // NEW
+  final double? longitude;  // NEW
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -28,6 +31,8 @@ class Transaction {
     this.budgetId,
     required this.date,
     this.notes,
+    this.latitude,   // NEW
+    this.longitude,  // NEW
     required this.createdAt,
     required this.updatedAt,
   });
@@ -43,6 +48,8 @@ class Transaction {
       budgetId: row['budget_id'],
       date: DateTime.parse(row['date']),
       notes: row['notes'],
+      latitude: row['latitude'] != null ? (row['latitude'] as num).toDouble() : null,   // NEW
+      longitude: row['longitude'] != null ? (row['longitude'] as num).toDouble() : null, // NEW
       createdAt: DateTime.parse(row['created_at']),
       updatedAt: DateTime.parse(row['updated_at']),
     );
@@ -59,6 +66,8 @@ class Transaction {
       'budget_id': budgetId,
       'date': date.toIso8601String(),
       'notes': notes,
+      'latitude': latitude,    // NEW
+      'longitude': longitude,  // NEW
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -138,15 +147,24 @@ class Transaction {
     String? budgetId,
     required DateTime date,
     String? notes,
+    double? latitude,   // NEW
+    double? longitude,  // NEW
   }) async {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
 
+    // Check if this is the first transaction - set the tracking start time
+    final hasFirstTransaction = await UserPreferences.hasRecordedFirstTransaction();
+    if (!hasFirstTransaction) {
+      await UserPreferences.setFirstTransactionTime(DateTime.now());
+      print('✓ First transaction recorded - tracking started');
+    }
+
     final now = DateTime.now().toIso8601String();
     final results = await db.execute('''
       INSERT INTO $transactionsTable(
-        id, user_id, title, amount, type, category_id, budget_id, date, notes, created_at, updated_at
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, user_id, title, amount, type, category_id, budget_id, date, notes, latitude, longitude, created_at, updated_at
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     ''', [
       uuid.v4(),
@@ -158,6 +176,8 @@ class Transaction {
       budgetId,
       date.toIso8601String(),
       notes,
+      latitude,   // NEW
+      longitude,  // NEW
       now,
       now,
     ]);
@@ -174,6 +194,8 @@ class Transaction {
     String? budgetId,
     DateTime? date,
     String? notes,
+    double? latitude,   // NEW
+    double? longitude,  // NEW
   }) async {
     final now = DateTime.now().toIso8601String();
     await db.execute('''
@@ -185,6 +207,8 @@ class Transaction {
         budget_id = COALESCE(?, budget_id),
         date = COALESCE(?, date),
         notes = COALESCE(?, notes),
+        latitude = COALESCE(?, latitude),       -- NEW
+        longitude = COALESCE(?, longitude),     -- NEW
         updated_at = ?
       WHERE id = ?
     ''', [
@@ -195,6 +219,8 @@ class Transaction {
       budgetId,
       date?.toIso8601String(),
       notes,
+      latitude,   // NEW
+      longitude,  // NEW
       now,
       id,
     ]);
@@ -249,272 +275,15 @@ class Transaction {
     return income - expenses;
   }
 
-  // Get total income for date range
-  static Future<double> getTotalIncomeForDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final userId = getUserId();
-    if (userId == null) return 0.0;
-    
-    final result = await db.getOptional('''
-      SELECT SUM(amount) as total FROM $transactionsTable 
-      WHERE user_id = ? 
-        AND type = 'income'
-        AND date >= ? 
-        AND date < ?
-    ''', [
-      userId,
-      startDate.toIso8601String(),
-      endDate.toIso8601String(),
-    ]);
-    
-    return (result?['total'] as num?)?.toDouble() ?? 0.0;
+  // Helper method to check if transaction has location
+  bool hasLocation() {
+    return latitude != null && longitude != null;
   }
 
-  // Get total expenses for date range
-  static Future<double> getTotalExpensesForDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final userId = getUserId();
-    if (userId == null) return 0.0;
-    
-    final result = await db.getOptional('''
-      SELECT SUM(amount) as total FROM $transactionsTable 
-      WHERE user_id = ? 
-        AND type = 'expense'
-        AND date >= ? 
-        AND date < ?
-    ''', [
-      userId,
-      startDate.toIso8601String(),
-      endDate.toIso8601String(),
-    ]);
-    
-    return (result?['total'] as num?)?.toDouble() ?? 0.0;
-  }
-
-  // Get balance for date range
-  static Future<double> getBalanceForDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final income = await getTotalIncomeForDateRange(startDate, endDate);
-    final expenses = await getTotalExpensesForDateRange(startDate, endDate);
-    return income - expenses;
-  }
-
-  // Get total amount by category
-  static Future<double> getTotalByCategory(String categoryId) async {
-    final userId = getUserId();
-    if (userId == null) return 0.0;
-    
-    final result = await db.getOptional('''
-      SELECT SUM(amount) as total FROM $transactionsTable 
-      WHERE user_id = ? AND category_id = ?
-    ''', [userId, categoryId]);
-    
-    return (result?['total'] as num?)?.toDouble() ?? 0.0;
-  }
-
-  // Get transaction count
-  static Future<int> getTransactionCount() async {
-    final userId = getUserId();
-    if (userId == null) return 0;
-    
-    final result = await db.getOptional('''
-      SELECT COUNT(*) as count FROM $transactionsTable 
-      WHERE user_id = ?
-    ''', [userId]);
-    
-    return (result?['count'] as int?) ?? 0;
-  }
-
-  // Get transaction count by type
-  static Future<int> getTransactionCountByType(TransactionType type) async {
-    final userId = getUserId();
-    if (userId == null) return 0;
-    
-    final result = await db.getOptional('''
-      SELECT COUNT(*) as count FROM $transactionsTable 
-      WHERE user_id = ? AND type = ?
-    ''', [userId, type.name]);
-    
-    return (result?['count'] as int?) ?? 0;
-  }
-
-  // Get transaction count for date range
-  static Future<int> getTransactionCountForDateRange(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    final userId = getUserId();
-    if (userId == null) return 0;
-    
-    final result = await db.getOptional('''
-      SELECT COUNT(*) as count FROM $transactionsTable 
-      WHERE user_id = ? 
-        AND date >= ? 
-        AND date < ?
-    ''', [
-      userId,
-      startDate.toIso8601String(),
-      endDate.toIso8601String(),
-    ]);
-    
-    return (result?['count'] as int?) ?? 0;
-  }
-
-  // Get recent transactions (limit)
-  static Future<List<Transaction>> getRecentTransactions({int limit = 10}) async {
-    final userId = getUserId();
-    if (userId == null) return [];
-    
-    final results = await db.getAll('''
-      SELECT * FROM $transactionsTable 
-      WHERE user_id = ? 
-      ORDER BY date DESC, created_at DESC
-      LIMIT ?
-    ''', [userId, limit]);
-    
-    return results.map(Transaction.fromRow).toList();
-  }
-
-  // Search transactions by title or notes
-  static Future<List<Transaction>> searchTransactions(String query) async {
-    final userId = getUserId();
-    if (userId == null) return [];
-    
-    final searchQuery = '%${query.toLowerCase()}%';
-    final results = await db.getAll('''
-      SELECT * FROM $transactionsTable 
-      WHERE user_id = ? 
-        AND (LOWER(title) LIKE ? OR LOWER(notes) LIKE ?)
-      ORDER BY date DESC, created_at DESC
-    ''', [userId, searchQuery, searchQuery]);
-    
-    return results.map(Transaction.fromRow).toList();
-  }
-
-  // Get transactions grouped by category with totals
-  static Future<Map<String, double>> getCategoryTotals({
-    TransactionType? type,
-    DateTime? startDate,
-    DateTime? endDate,
-  }) async {
-    final userId = getUserId();
-    if (userId == null) return {};
-    
-    String query = '''
-      SELECT category_id, SUM(amount) as total 
-      FROM $transactionsTable 
-      WHERE user_id = ?
-    ''';
-    
-    final params = <dynamic>[userId];
-    
-    if (type != null) {
-      query += ' AND type = ?';
-      params.add(type.name);
-    }
-    
-    if (startDate != null) {
-      query += ' AND date >= ?';
-      params.add(startDate.toIso8601String());
-    }
-    
-    if (endDate != null) {
-      query += ' AND date < ?';
-      params.add(endDate.toIso8601String());
-    }
-    
-    query += ' GROUP BY category_id';
-    
-    final results = await db.getAll(query, params);
-    
-    final Map<String, double> categoryTotals = {};
-    for (var row in results) {
-      categoryTotals[row['category_id']] = (row['total'] as num).toDouble();
-    }
-    
-    return categoryTotals;
-  }
-
-  // Get average transaction amount
-  static Future<double> getAverageAmount({
-    TransactionType? type,
-    DateTime? startDate,
-    DateTime? endDate,
-  }) async {
-    final userId = getUserId();
-    if (userId == null) return 0.0;
-    
-    String query = '''
-      SELECT AVG(amount) as average 
-      FROM $transactionsTable 
-      WHERE user_id = ?
-    ''';
-    
-    final params = <dynamic>[userId];
-    
-    if (type != null) {
-      query += ' AND type = ?';
-      params.add(type.name);
-    }
-    
-    if (startDate != null) {
-      query += ' AND date >= ?';
-      params.add(startDate.toIso8601String());
-    }
-    
-    if (endDate != null) {
-      query += ' AND date < ?';
-      params.add(endDate.toIso8601String());
-    }
-    
-    final result = await db.getOptional(query, params);
-    
-    return (result?['average'] as num?)?.toDouble() ?? 0.0;
-  }
-
-  // Get largest transaction
-  static Future<Transaction?> getLargestTransaction({
-    TransactionType? type,
-    DateTime? startDate,
-    DateTime? endDate,
-  }) async {
-    final userId = getUserId();
-    if (userId == null) return null;
-    
-    String query = '''
-      SELECT * FROM $transactionsTable 
-      WHERE user_id = ?
-    ''';
-    
-    final params = <dynamic>[userId];
-    
-    if (type != null) {
-      query += ' AND type = ?';
-      params.add(type.name);
-    }
-    
-    if (startDate != null) {
-      query += ' AND date >= ?';
-      params.add(startDate.toIso8601String());
-    }
-    
-    if (endDate != null) {
-      query += ' AND date < ?';
-      params.add(endDate.toIso8601String());
-    }
-    
-    query += ' ORDER BY amount DESC LIMIT 1';
-    
-    final result = await db.getOptional(query, params);
-    
-    if (result == null) return null;
-    return Transaction.fromRow(result);
+  // Helper method to get location as a formatted string
+  String? getLocationString() {
+    if (!hasLocation()) return null;
+    return '${latitude!.toStringAsFixed(6)}, ${longitude!.toStringAsFixed(6)}';
   }
 
   // Copy transaction (useful for recurring transactions)
@@ -530,12 +299,14 @@ class Transaction {
       budgetId: budgetId,
       date: newDate ?? DateTime.now(),
       notes: newNotes ?? notes,
+      latitude: latitude,   // Preserve location
+      longitude: longitude, // Preserve location
     );
   }
 
   @override
   String toString() {
-    return 'Transaction(id: $id, title: $title, amount: $amount, type: ${type.name}, date: $date)';
+    return 'Transaction(id: $id, title: $title, amount: $amount, type: ${type.name}, date: $date, location: ${getLocationString() ?? "none"})';
   }
 
   @override
