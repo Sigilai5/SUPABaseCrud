@@ -8,7 +8,7 @@ import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
 import 'widgets/mpesa/pending_mpesa_page.dart';
-import 'models/pending_mpesa.dart';
+import 'models/mpesa_transaction.dart';
 
 void main() async {
   Logger.root.level = Level.INFO;
@@ -230,8 +230,8 @@ class AppDrawer extends StatelessWidget {
             const Divider(),
             
             // Pending MPESA Messages with Badge
-            StreamBuilder<List<PendingMpesa>>(
-              stream: PendingMpesa.watchUserPendingMessages(),
+            StreamBuilder<List<MpesaTransaction>>(
+              stream: MpesaTransaction.watchPendingTransactions(),
               builder: (context, snapshot) {
                 final count = snapshot.data?.length ?? 0;
                 
@@ -366,16 +366,30 @@ class AppDrawer extends StatelessWidget {
               ),
               SizedBox(height: 16),
               Text(
+                'MPESA Transaction Types',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '• Send Money - Phone number transfers\n'
+                '• Pochi La Biashara - Business wallet\n'
+                '• Till Payments - Lipa Na MPESA\n'
+                '• Paybill - Bill payments\n'
+                '• Received - Money received from others',
+              ),
+              SizedBox(height: 16),
+              Text(
                 'Features',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               SizedBox(height: 8),
               Text(
-                '• Automatic MPESA transaction detection\n'
+                '• Automatic MPESA SMS detection (5 types)\n'
                 '• Pending MPESA messages review\n'
                 '• Real-time sync across devices\n'
                 '• Detailed spending reports\n'
                 '• Category management\n'
+                '• Location tagging\n'
                 '• Offline support',
               ),
               SizedBox(height: 16),

@@ -44,11 +44,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Stream<int> _watchPendingCount() async* {
-    await for (final messages in PendingMpesa.watchUserPendingMessages()) {
-      yield messages.length;
-    }
-  }
+ 
 
   Future<void> _handleSignOut() async {
     final shouldSignOut = await showDialog<bool>(
@@ -564,67 +560,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Card(
-                  child: Column(
-                    children: [
-                      StreamBuilder<int>(
-                        stream: _watchPendingCount(),
-                        builder: (context, snapshot) {
-                          final count = snapshot.data ?? 0;
-                          return ListTile(
-                            leading: Badge(
-                              label: Text('$count'),
-                              isLabelVisible: count > 0,
-                              child: const Icon(Icons.pending_actions),
-                            ),
-                            title: const Text('Pending MPESA Messages'),
-                            subtitle: Text(
-                              count == 0
-                                  ? 'No pending messages'
-                                  : '$count ${count == 1 ? 'message' : 'messages'} waiting',
-                            ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => const PendingMpesaPage(),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.sync),
-                        title: const Text('Sync Status'),
-                        subtitle: const Text('View database sync status'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          _showSyncStatus();
-                        },
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.clear_all),
-                        title: const Text('Clear Cache'),
-                        subtitle: const Text('Clear local cache and re-sync'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: _handleClearCache,
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.info_outline),
-                        title: const Text('About'),
-                        subtitle: const Text('Version 1.0.0'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          _showAboutDialog();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 24),
 
                 // Debug Section

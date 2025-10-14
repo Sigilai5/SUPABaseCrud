@@ -3,7 +3,7 @@ import 'package:powersync/powersync.dart';
 
 const transactionsTable = 'transactions';
 const categoriesTable = 'categories';
-const pendingMpesaTable = 'pending_mpesa';
+const mpesaTransactionsTable = 'mpesa_transactions';
 
 Schema schema = Schema([
   // Transactions table for income and expenses
@@ -16,8 +16,8 @@ Schema schema = Schema([
     Column.text('budget_id'),         // Budget reference
     Column.text('date'),              // Transaction date (ISO string)
     Column.text('notes'),             // Optional notes
-    Column.real('latitude'),          // NEW: Location latitude
-    Column.real('longitude'),         // NEW: Location longitude
+    Column.real('latitude'),          // Location latitude
+    Column.real('longitude'),         // Location longitude
     Column.text('created_at'),        // Creation timestamp
     Column.text('updated_at'),        // Last update timestamp
   ], indexes: [
@@ -41,20 +41,27 @@ Schema schema = Schema([
     Index('category_type', [IndexedColumn('type')]),
   ]),
 
-  // Pending MPESA messages table
-  const Table(pendingMpesaTable, [
-    Column.text('user_id'),           // Owner of the pending message
-    Column.text('raw_message'),       // Original SMS message
-    Column.text('sender'),            // SMS sender (e.g., MPESA)
-    Column.text('transaction_code'),  // MPESA transaction code
-    Column.real('amount'),            // Parsed amount
-    Column.text('type'),              // 'income' or 'expense'
-    Column.text('parsed_title'),      // Parsed transaction title
-    Column.text('received_at'),       // When SMS was received
-    Column.text('created_at'),        // When record was created
+  // MPESA Transactions table - comprehensive storage for all MPESA messages
+  const Table(mpesaTransactionsTable, [
+    Column.text('user_id'),                 // Owner of the transaction
+    Column.text('transaction_code'),        // MPESA code (e.g., TJ9JN6XFA2)
+    Column.text('transaction_type'),        // SEND, POCHI, TILL, PAYBILL, RECEIVED
+    Column.real('amount'),                  // Transaction amount
+    Column.text('counterparty_name'),       // Person/business name
+    Column.text('counterparty_number'),     // Phone number or account number
+    Column.text('transaction_date'),        // When transaction occurred (ISO string)
+    Column.real('new_balance'),             // M-PESA balance after transaction
+    Column.real('transaction_cost'),        // Fee charged by M-PESA
+    Column.integer('is_debit'),             // 1 = money out, 0 = money in
+    Column.text('raw_message'),             // Original SMS for reference
+    Column.text('notes'),                   // Auto-generated or user notes
+    Column.text('linked_transaction_id'),   // NULL or ID if converted to transaction
+    Column.text('created_at'),              // When recorded in app
   ], indexes: [
-    Index('user_pending_mpesa', [IndexedColumn('user_id')]),
-    Index('pending_mpesa_code', [IndexedColumn('transaction_code')]),
-    Index('pending_mpesa_date', [IndexedColumn('received_at')]),
+    Index('user_mpesa', [IndexedColumn('user_id')]),
+    Index('mpesa_code', [IndexedColumn('transaction_code')]),
+    Index('mpesa_date', [IndexedColumn('transaction_date')]),
+    Index('mpesa_type', [IndexedColumn('transaction_type')]),
+    Index('mpesa_linked', [IndexedColumn('linked_transaction_id')]),
   ]),
 ]);
