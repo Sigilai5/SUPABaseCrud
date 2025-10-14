@@ -114,9 +114,6 @@ Future<void> openDatabase() async {
 
   await loadSupabase();
 
-  // Migrations removed - PowerSync handles schema automatically
-  // await configureMigrations(db);
-
   SupabaseConnector? currentConnector;
 
   if (isLoggedIn()) {
@@ -139,6 +136,36 @@ Future<void> openDatabase() async {
 }
 
 Future<void> logout() async {
-  await Supabase.instance.client.auth.signOut();
-  await db.disconnectAndClear();
+  try {
+    print('=== Starting Logout Process ===');
+    
+    // Sign out from Supabase with timeout
+    print('Step 1: Signing out from Supabase...');
+    await Supabase.instance.client.auth.signOut()
+        .timeout(const Duration(seconds: 5));
+    print('✓ Supabase sign out complete');
+    
+    // Disconnect and clear PowerSync with timeout
+    print('Step 2: Clearing local database...');
+    await db.disconnectAndClear()
+        .timeout(
+          const Duration(seconds: 5),
+          onTimeout: () async {
+            print('⚠ PowerSync disconnect timeout - forcing disconnect');
+            await db.disconnect();
+          },
+        );
+    print('✓ Local database cleared');
+    
+    print('=== Logout Complete ===');
+  } catch (e) {
+    print('✗ Error during logout: $e');
+    // Force sign out from Supabase even if PowerSync fails
+    try {
+      await Supabase.instance.client.auth.signOut();
+      print('✓ Forced Supabase sign out');
+    } catch (signOutError) {
+      print('✗ Error signing out from Supabase: $signOutError');
+    }
+  }
 }

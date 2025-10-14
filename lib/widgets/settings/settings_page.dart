@@ -1,4 +1,5 @@
 // lib/widgets/settings/settings_page.dart
+import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -47,52 +48,104 @@ class _SettingsPageState extends State<SettingsPage> {
  
 
   Future<void> _handleSignOut() async {
-    final shouldSignOut = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign Out'),
-        content: const Text('Are you sure you want to sign out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+  final shouldSignOut = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Sign Out'),
+      content: const Text('Are you sure you want to sign out?'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Sign Out'),
+          child: const Text('Sign Out'),
+        ),
+      ],
+    ),
+  );
+
+  if (shouldSignOut != true || !mounted) return;
+
+  // Show loading dialog
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => const Center(
+      child: Card(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Signing out...'),
+            ],
           ),
-        ],
+        ),
+      ),
+    ),
+  );
+
+  try {
+    // Logout with timeout
+    await logout().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () async {
+        // Force logout if taking too long
+        print('Logout timeout - forcing sign out');
+        await Supabase.instance.client.auth.signOut();
+      },
+    );
+    
+    if (!mounted) return;
+    
+    // Close loading dialog
+    Navigator.of(context).pop();
+    
+    // Navigate to login page
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginPage()),
+      (route) => false,
+    );
+    
+  } catch (e) {
+    print('Sign out error: $e');
+    
+    if (!mounted) return;
+    
+    // Close loading dialog
+    Navigator.of(context).pop();
+    
+    // Show error with force logout option
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error signing out: $e'),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Force Logout',
+          textColor: Colors.white,
+          onPressed: () async {
+            await Supabase.instance.client.auth.signOut();
+            if (mounted) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const LoginPage()),
+                (route) => false,
+              );
+            }
+          },
+        ),
       ),
     );
-
-    if (shouldSignOut == true && mounted) {
-      setState(() => _isLoading = true);
-      
-      try {
-        await logout();
-        if (mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const LoginPage()),
-            (route) => false,
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error signing out: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    }
   }
+}
 
   Future<void> _handleStartAfresh() async {
     final shouldProceed = await showDialog<bool>(
@@ -749,6 +802,16 @@ class _SettingsPageState extends State<SettingsPage> {
                           );
                         },
                       ),
+               
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.delete_forever, color: Colors.red),
+                        title: const Text('Clear Cache'),
+                        subtitle: const Text('Clear local cache and resync data'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _handleClearCache,
+                      ),
+
                     ],
                   ),
                 ),

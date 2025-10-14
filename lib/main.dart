@@ -1,3 +1,4 @@
+import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'powersync.dart';
@@ -276,10 +277,10 @@ class AppDrawer extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const PendingMpesaPage(),
-                      ),
-                    );
+                            MaterialPageRoute(
+                              builder: (context) => const ComprehensivePendingPage(),
+                            ),
+                          );
                   },
                 );
               },
