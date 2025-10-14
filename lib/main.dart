@@ -9,6 +9,7 @@ import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
 import 'widgets/mpesa/pending_mpesa_page.dart';
 import 'models/mpesa_transaction.dart';
+import 'widgets/sms/sms_messages_page.dart';
 
 void main() async {
   Logger.root.level = Level.INFO;
@@ -228,6 +229,25 @@ class AppDrawer extends StatelessWidget {
             ),
             
             const Divider(),
+            
+            // SMS Messages
+            ListTile(
+              leading: const Icon(Icons.message, color: Colors.blue),
+              title: const Text('SMS Messages'),
+              subtitle: const Text(
+                'View all SMS messages',
+                style: TextStyle(fontSize: 12),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const SmsMessagesPage(),
+                  ),
+                );
+              },
+            ),
             
             // Pending MPESA Messages with Badge
             StreamBuilder<List<MpesaTransaction>>(
