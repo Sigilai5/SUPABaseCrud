@@ -55,7 +55,7 @@ Schema schema = Schema([
     Column.integer('is_debit'),             // 1 = money out, 0 = money in
     Column.text('raw_message'),             // Original SMS for reference
     Column.text('notes'),                   // Auto-generated or user notes
-    Column.text('linked_transaction_id'),   // NULL or ID if converted to transaction
+    Column.text('linked_transaction_id'),   // FOREIGN KEY -> transactions.id (NULL if not converted)
     Column.text('created_at'),              // When recorded in app
   ], indexes: [
     Index('user_mpesa', [IndexedColumn('user_id')]),

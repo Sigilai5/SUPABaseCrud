@@ -3,6 +3,7 @@ import 'package:powersync/sqlite3_common.dart' as sqlite;
 import '../powersync.dart';
 import '../services/user_preferences.dart';
 import 'schema.dart';
+import 'mpesa_transaction.dart';
 
 enum TransactionType { income, expense }
 
@@ -16,8 +17,8 @@ class Transaction {
   final String? budgetId;
   final DateTime date;
   final String? notes;
-  final double? latitude;   // NEW
-  final double? longitude;  // NEW
+  final double? latitude;
+  final double? longitude;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -31,8 +32,8 @@ class Transaction {
     this.budgetId,
     required this.date,
     this.notes,
-    this.latitude,   // NEW
-    this.longitude,  // NEW
+    this.latitude,
+    this.longitude,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -48,8 +49,8 @@ class Transaction {
       budgetId: row['budget_id'],
       date: DateTime.parse(row['date']),
       notes: row['notes'],
-      latitude: row['latitude'] != null ? (row['latitude'] as num).toDouble() : null,   // NEW
-      longitude: row['longitude'] != null ? (row['longitude'] as num).toDouble() : null, // NEW
+      latitude: row['latitude'] != null ? (row['latitude'] as num).toDouble() : null,
+      longitude: row['longitude'] != null ? (row['longitude'] as num).toDouble() : null,
       createdAt: DateTime.parse(row['created_at']),
       updatedAt: DateTime.parse(row['updated_at']),
     );
@@ -66,8 +67,8 @@ class Transaction {
       'budget_id': budgetId,
       'date': date.toIso8601String(),
       'notes': notes,
-      'latitude': latitude,    // NEW
-      'longitude': longitude,  // NEW
+      'latitude': latitude,
+      'longitude': longitude,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -138,6 +139,26 @@ class Transaction {
     });
   }
 
+  // Watch transactions with MPESA link information (JOIN query)
+  static Stream<List<Map<String, dynamic>>> watchTransactionsWithMpesaInfo() {
+    final userId = getUserId();
+    if (userId == null) return Stream.value([]);
+    
+    return db.watch('''
+      SELECT 
+        t.*,
+        COUNT(m.id) as mpesa_count,
+        MIN(m.transaction_code) as mpesa_code
+      FROM $transactionsTable t
+      LEFT JOIN $mpesaTransactionsTable m ON t.id = m.linked_transaction_id
+      WHERE t.user_id = ?
+      GROUP BY t.id
+      ORDER BY t.date DESC, t.created_at DESC
+    ''', parameters: [userId]).map((results) {
+      return results.map((row) => Map<String, dynamic>.from(row)).toList();
+    });
+  }
+
   // Create new transaction
   static Future<Transaction> create({
     required String title,
@@ -147,8 +168,8 @@ class Transaction {
     String? budgetId,
     required DateTime date,
     String? notes,
-    double? latitude,   // NEW
-    double? longitude,  // NEW
+    double? latitude,
+    double? longitude,
   }) async {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
@@ -176,8 +197,8 @@ class Transaction {
       budgetId,
       date.toIso8601String(),
       notes,
-      latitude,   // NEW
-      longitude,  // NEW
+      latitude,
+      longitude,
       now,
       now,
     ]);
@@ -194,8 +215,8 @@ class Transaction {
     String? budgetId,
     DateTime? date,
     String? notes,
-    double? latitude,   // NEW
-    double? longitude,  // NEW
+    double? latitude,
+    double? longitude,
   }) async {
     final now = DateTime.now().toIso8601String();
     await db.execute('''
@@ -207,8 +228,8 @@ class Transaction {
         budget_id = COALESCE(?, budget_id),
         date = COALESCE(?, date),
         notes = COALESCE(?, notes),
-        latitude = COALESCE(?, latitude),       -- NEW
-        longitude = COALESCE(?, longitude),     -- NEW
+        latitude = COALESCE(?, latitude),
+        longitude = COALESCE(?, longitude),
         updated_at = ?
       WHERE id = ?
     ''', [
@@ -219,8 +240,8 @@ class Transaction {
       budgetId,
       date?.toIso8601String(),
       notes,
-      latitude,   // NEW
-      longitude,  // NEW
+      latitude,
+      longitude,
       now,
       id,
     ]);
@@ -229,6 +250,21 @@ class Transaction {
   // Delete transaction
   Future<void> delete() async {
     await db.execute('DELETE FROM $transactionsTable WHERE id = ?', [id]);
+  }
+
+  /// Delete transaction and unlink all associated MPESA transactions
+  /// This preserves the MPESA records but removes the foreign key link
+  Future<void> deleteWithUnlink() async {
+    // First unlink all MPESA transactions
+    final linkedMpesa = await getLinkedMpesaTransactions();
+    for (var mpesa in linkedMpesa) {
+      await mpesa.unlink();
+    }
+    
+    print('✓ Unlinked ${linkedMpesa.length} MPESA transaction(s)');
+    
+    // Then delete the transaction
+    await delete();
   }
 
   // Get transaction by ID
@@ -240,6 +276,23 @@ class Transaction {
     
     if (result == null) return null;
     return Transaction.fromRow(result);
+  }
+
+  /// Check if this transaction was created from an MPESA transaction
+  Future<bool> hasLinkedMpesaTransaction() async {
+    final mpesaTransactions = await MpesaTransaction.getByLinkedTransactionId(id);
+    return mpesaTransactions.isNotEmpty;
+  }
+
+  /// Get all MPESA transactions linked to this transaction
+  Future<List<MpesaTransaction>> getLinkedMpesaTransactions() async {
+    return await MpesaTransaction.getByLinkedTransactionId(id);
+  }
+
+  /// Get the first (primary) linked MPESA transaction if it exists
+  Future<MpesaTransaction?> getPrimaryLinkedMpesaTransaction() async {
+    final mpesaTransactions = await MpesaTransaction.getByLinkedTransactionId(id);
+    return mpesaTransactions.isEmpty ? null : mpesaTransactions.first;
   }
 
   // Get total income
@@ -299,8 +352,8 @@ class Transaction {
       budgetId: budgetId,
       date: newDate ?? DateTime.now(),
       notes: newNotes ?? notes,
-      latitude: latitude,   // Preserve location
-      longitude: longitude, // Preserve location
+      latitude: latitude,
+      longitude: longitude,
     );
   }
 

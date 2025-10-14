@@ -2,6 +2,7 @@
 import 'package:powersync/sqlite3_common.dart' as sqlite;
 import '../powersync.dart';
 import 'schema.dart';
+import 'transaction.dart';
 
 enum MpesaTransactionType {
   send,      // Send money to phone number
@@ -25,7 +26,7 @@ class MpesaTransaction {
   final bool isDebit;
   final String rawMessage;
   final String? notes;
-  final String? linkedTransactionId; // If converted to regular transaction
+  final String? linkedTransactionId; // FOREIGN KEY -> transactions.id
   final DateTime createdAt;
 
   MpesaTransaction({
@@ -102,6 +103,27 @@ class MpesaTransaction {
     });
   }
 
+  // Watch all MPESA transactions with their linked transactions (JOIN query)
+  static Stream<List<Map<String, dynamic>>> watchTransactionsWithLinks() {
+    final userId = getUserId();
+    if (userId == null) return Stream.value([]);
+    
+    return db.watch('''
+      SELECT 
+        m.*,
+        t.title as linked_title,
+        t.amount as linked_amount,
+        t.type as linked_type,
+        t.category_id as linked_category_id
+      FROM $mpesaTransactionsTable m
+      LEFT JOIN $transactionsTable t ON m.linked_transaction_id = t.id
+      WHERE m.user_id = ?
+      ORDER BY m.transaction_date DESC, m.created_at DESC
+    ''', parameters: [userId]).map((results) {
+      return results.map((row) => Map<String, dynamic>.from(row)).toList();
+    });
+  }
+
   // Create new MPESA transaction
   static Future<MpesaTransaction> create({
     required String transactionCode,
@@ -149,13 +171,61 @@ class MpesaTransaction {
     return MpesaTransaction.fromRow(results.first);
   }
 
-  // Mark as linked to a regular transaction
+  /// Link this MPESA transaction to a regular transaction
+  /// This sets the foreign key relationship
   Future<void> linkToTransaction(String transactionId) async {
+    // Verify the transaction exists before linking
+    final transaction = await Transaction.getById(transactionId);
+    if (transaction == null) {
+      throw Exception('Cannot link to non-existent transaction: $transactionId');
+    }
+    
+    // Verify the transaction belongs to the same user
+    if (transaction.userId != userId) {
+      throw Exception('Cannot link MPESA transaction to transaction owned by different user');
+    }
+    
+    // Update the foreign key
     await db.execute('''
       UPDATE $mpesaTransactionsTable 
       SET linked_transaction_id = ?
       WHERE id = ?
     ''', [transactionId, id]);
+    
+    print('✓ MPESA transaction $transactionCode linked to transaction $transactionId');
+  }
+
+  /// Unlink from transaction (set foreign key to NULL)
+  Future<void> unlink() async {
+    await db.execute('''
+      UPDATE $mpesaTransactionsTable 
+      SET linked_transaction_id = NULL
+      WHERE id = ?
+    ''', [id]);
+    
+    print('✓ MPESA transaction $transactionCode unlinked');
+  }
+
+  /// Get the linked transaction if it exists
+  Future<Transaction?> getLinkedTransaction() async {
+    if (linkedTransactionId == null) return null;
+    return await Transaction.getById(linkedTransactionId!);
+  }
+
+  /// Check if this MPESA transaction is linked to a regular transaction
+  bool isLinked() {
+    return linkedTransactionId != null;
+  }
+
+  /// Get all MPESA transactions for a specific regular transaction
+  static Future<List<MpesaTransaction>> getByLinkedTransactionId(String transactionId) async {
+    final results = await db.getAll('''
+      SELECT * FROM $mpesaTransactionsTable 
+      WHERE linked_transaction_id = ?
+      ORDER BY transaction_date DESC
+    ''', [transactionId]);
+    
+    return results.map(MpesaTransaction.fromRow).toList();
   }
 
   // Delete this MPESA transaction
