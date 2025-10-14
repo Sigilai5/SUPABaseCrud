@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/transaction.dart';
 import '../../models/category.dart';
+import '../../services/location_service.dart';
+import '../common/location_capture_widget.dart';
 
 class TransactionForm extends StatefulWidget {
   final Transaction? transaction;
@@ -37,6 +39,10 @@ class _TransactionFormState extends State<TransactionForm> {
   DateTime _selectedDate = DateTime.now();
   List<Category> _categories = [];
   bool _loading = false;
+  
+  // Location fields
+  double? _latitude;
+  double? _longitude;
 
   @override
   void initState() {
@@ -65,6 +71,8 @@ class _TransactionFormState extends State<TransactionForm> {
     _selectedCategoryId = transaction.categoryId;
     _selectedDate = transaction.date;
     _notesController.text = transaction.notes ?? '';
+    _latitude = transaction.latitude;
+    _longitude = transaction.longitude;
   }
 
   Future<void> _loadCategories() async {
@@ -131,6 +139,8 @@ class _TransactionFormState extends State<TransactionForm> {
           notes: _notesController.text.trim().isEmpty 
               ? null 
               : _notesController.text.trim(),
+          latitude: _latitude,
+          longitude: _longitude,
         );
 
         if (mounted) {
@@ -153,6 +163,8 @@ class _TransactionFormState extends State<TransactionForm> {
           notes: _notesController.text.trim().isEmpty 
               ? null 
               : _notesController.text.trim(),
+          latitude: _latitude,
+          longitude: _longitude,
         );
 
         if (mounted) {
@@ -378,6 +390,19 @@ class _TransactionFormState extends State<TransactionForm> {
                       prefixIcon: Icon(Icons.note),
                     ),
                     maxLines: 3,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Location capture widget
+                  LocationCaptureWidget(
+                    initialLatitude: _latitude,
+                    initialLongitude: _longitude,
+                    onLocationChanged: (lat, lng) {
+                      setState(() {
+                        _latitude = lat;
+                        _longitude = lng;
+                      });
+                    },
                   ),
                   const SizedBox(height: 24),
 

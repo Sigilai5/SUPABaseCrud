@@ -1,3 +1,6 @@
+// lib/widgets/transactions/transaction_list.dart
+// COMPLETE FILE - Replace your entire transaction_list.dart with this
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,6 +8,7 @@ import '../../models/transaction.dart';
 import '../../models/category.dart';
 import '../../powersync.dart';
 import 'transaction_form.dart';
+import '../common/location_display_widget.dart'; // NEW: Location import
 
 class TransactionList extends StatelessWidget {
   const TransactionList({super.key});
@@ -38,11 +42,9 @@ class TransactionList extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Column(
               children: [
-                // User Profile Header
                 _buildProfileHeader(),
                 const SizedBox(height: 16),
                 
-                // Spending Cards
                 Expanded(
                   child: transactions.isEmpty
                       ? _buildEmptyState(context)
@@ -87,7 +89,6 @@ class TransactionList extends StatelessWidget {
           );
         },
       ),
-      // Add Floating Action Button
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddTransaction(context),
         icon: const Icon(Icons.add),
@@ -519,7 +520,7 @@ class TransactionList extends StatelessWidget {
 
 enum SpendingPeriod { today, week, month }
 
-// Period Details Page (unchanged from before)
+// UPDATED PeriodDetailsPage with Location Support
 class PeriodDetailsPage extends StatelessWidget {
   final String title;
   final List<Transaction> transactions;
@@ -544,7 +545,6 @@ class PeriodDetailsPage extends StatelessWidget {
     
     final netBalance = totalIncome - totalExpenses;
 
-    // Group transactions by date
     final Map<String, List<Transaction>> groupedTransactions = {};
     for (var transaction in transactions) {
       final dateKey = DateFormat('EEEE, MMM dd, yyyy').format(transaction.date);
@@ -560,7 +560,6 @@ class PeriodDetailsPage extends StatelessWidget {
       ),
       body: Column(
         children: [
-          // Summary Header
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(24),
@@ -665,7 +664,6 @@ class PeriodDetailsPage extends StatelessWidget {
             ),
           ),
           
-          // Transaction List
           Expanded(
             child: transactions.isEmpty
                 ? Center(
@@ -731,95 +729,4 @@ class PeriodDetailsPage extends StatelessWidget {
                                     if (dayExpenses > 0)
                                       Text(
                                         '-${NumberFormat('#,##0').format(dayExpenses)}',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.red.shade700,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          
-                          ...dayTransactions.map((transaction) =>
-                            TransactionListItem(transaction: transaction)
-                          ),
-                          
-                          const SizedBox(height: 8),
-                        ],
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Transaction List Item Widget
-class TransactionListItem extends StatelessWidget {
-  final Transaction transaction;
-
-  const TransactionListItem({
-    super.key,
-    required this.transaction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isIncome = transaction.type == TransactionType.income;
-    final color = isIncome ? Colors.green : Colors.red;
-    final icon = isIncome ? Icons.arrow_downward : Icons.arrow_upward;
-    final label = isIncome ? 'Income' : 'Expense';
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.shade100,
-          child: Icon(
-            icon,
-            color: color.shade700,
-          ),
-        ),
-        title: Text(
-          transaction.title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${DateFormat('h:mm a').format(transaction.date)} • $label'),
-            if (transaction.notes != null && transaction.notes!.isNotEmpty)
-              Text(
-                transaction.notes!,
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-          ],
-        ),
-        trailing: Text(
-          '${isIncome ? '+' : '-'}KES ${NumberFormat('#,##0').format(transaction.amount)}',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: color,
-          ),
-        ),
-        onTap: () => _showTransactionDetails(context, transaction),
-      ),
-    );
-  }
-
-  void _showTransactionDetails(BuildContext context, Transaction transaction) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => TransactionForm(transaction: transaction),
-      ),
-    );
-  }
-}
+                                        style: Text

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/mpesa_service.dart';
+import '../../services/location_service.dart';
 import '../../powersync.dart';
 import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
@@ -20,6 +21,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool _smsPermission = false;
   bool _overlayPermission = false;
+  bool _locationPermission = false;
   bool _isLoading = false;
 
   @override
@@ -31,11 +33,13 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _loadPermissions() async {
     final sms = await MpesaService.hasSmsPermission();
     final overlay = await MpesaService.hasOverlayPermission();
+    final location = await LocationService.hasLocationPermission();
     
     if (mounted) {
       setState(() {
         _smsPermission = sms;
         _overlayPermission = overlay;
+        _locationPermission = location;
       });
     }
   }
@@ -95,7 +99,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _handleStartAfresh() async {
-    // Show warning dialog first
     final shouldProceed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -131,7 +134,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (shouldProceed != true || !mounted) return;
 
-    // Show password dialog
     final password = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -190,10 +192,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (password == null || password.trim().isEmpty || !mounted) return;
 
-    // Start loading
     setState(() => _isLoading = true);
 
-    // Verify password
     bool passwordValid = false;
     try {
       final user = Supabase.instance.client.auth.currentUser;
@@ -201,7 +201,6 @@ class _SettingsPageState extends State<SettingsPage> {
         throw Exception('User not logged in');
       }
 
-      // Verify password by attempting to sign in
       final response = await Supabase.instance.client.auth.signInWithPassword(
         email: user.email!,
         password: password,
@@ -216,7 +215,6 @@ class _SettingsPageState extends State<SettingsPage> {
       print('Error verifying password: $e');
     }
 
-    // Stop loading and check if password was valid
     if (!mounted) return;
     setState(() => _isLoading = false);
 
@@ -233,7 +231,6 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
-    // Password is correct, show final confirmation
     if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -261,10 +258,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (confirmed != true || !mounted) return;
 
-    // Start loading for deletion
     setState(() => _isLoading = true);
 
-    // Delete all transactions
     try {
       await _deleteAllTransactions();
 
@@ -277,7 +272,7 @@ class _SettingsPageState extends State<SettingsPage> {
             duration: Duration(seconds: 3),
           ),
         );
-        Navigator.pop(context); // Go back to main page
+        Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
@@ -297,7 +292,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
 
-    // Delete all transactions for the current user
     await db.execute('''
       DELETE FROM transactions WHERE user_id = ?
     ''', [userId]);
@@ -324,9 +318,34 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _requestOverlayPermission() async {
     await MpesaService.requestOverlayPermission();
-    // Wait a bit for the user to grant permission
     await Future.delayed(const Duration(seconds: 1));
     await _loadPermissions();
+  }
+
+  Future<void> _requestLocationPermission() async {
+    final isDeniedForever = await LocationService.isPermissionDeniedForever();
+    
+    if (isDeniedForever) {
+      if (mounted) {
+        await LocationService.showOpenSettingsDialog(context);
+      }
+      return;
+    }
+
+    final granted = await LocationService.showLocationPermissionDialog(context);
+    if (mounted) {
+      setState(() => _locationPermission = granted);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            granted 
+              ? 'Location permission granted' 
+              : 'Location permission denied',
+          ),
+          backgroundColor: granted ? Colors.green : Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _handleClearCache() async {
@@ -356,10 +375,8 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _isLoading = true);
 
     try {
-      // Disconnect and clear local database
       await db.disconnectAndClear();
       
-      // Reconnect with fresh sync
       final connector = SupabaseConnector();
       db.connect(connector: connector);
 
@@ -491,6 +508,35 @@ class _SettingsPageState extends State<SettingsPage> {
                           onChanged: (value) async {
                             if (value) {
                               await _requestOverlayPermission();
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please disable in system settings',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: Icon(
+                          Icons.location_on,
+                          color: _locationPermission ? Colors.green : Colors.grey,
+                        ),
+                        title: const Text('Location Permission'),
+                        subtitle: Text(
+                          _locationPermission
+                              ? 'Enabled - Can tag transactions with location'
+                              : 'Disabled - Enable to track transaction locations',
+                        ),
+                        trailing: Switch(
+                          value: _locationPermission,
+                          onChanged: (value) async {
+                            if (value) {
+                              await _requestLocationPermission();
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -670,7 +716,6 @@ class _SettingsPageState extends State<SettingsPage> {
                                       onPressed: () async {
                                         Navigator.pop(context);
                                         
-                                        // Show processing dialog
                                         showDialog(
                                           context: context,
                                           barrierDismissible: false,
@@ -694,7 +739,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                         await MpesaService.processPendingTransactions();
                                         
                                         if (context.mounted) {
-                                          Navigator.pop(context); // Close processing dialog
+                                          Navigator.pop(context);
                                           ScaffoldMessenger.of(context).showSnackBar(
                                             const SnackBar(
                                               content: Text('Processing complete! Check transactions list.'),
@@ -745,7 +790,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           await MpesaService.processPendingTransactions();
 
                           if (context.mounted) {
-                            Navigator.pop(context); // Close loading dialog
+                            Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('Processing complete!'),
@@ -916,7 +961,7 @@ class _SettingsPageState extends State<SettingsPage> {
       children: [
         const SizedBox(height: 16),
         const Text(
-          'A modern expense tracking app with automatic MPESA transaction detection.',
+          'A modern expense tracking app with automatic MPESA transaction detection and location tagging.',
         ),
         const SizedBox(height: 16),
         const Text(
@@ -929,6 +974,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 8),
         const Text('• Automatic MPESA SMS detection'),
+        const Text('• Location tagging for transactions'),
         const Text('• Real-time sync across devices'),
         const Text('• Detailed spending reports'),
         const Text('• Category management'),
