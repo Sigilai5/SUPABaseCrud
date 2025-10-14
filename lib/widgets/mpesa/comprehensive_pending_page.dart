@@ -1,5 +1,6 @@
 // lib/widgets/mpesa/comprehensive_pending_page.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -79,11 +80,8 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         // Check if exists in mpesa_transactions table
         final existsInMpesa = await MpesaTransaction.exists(parsedData.transactionCode);
         
-        // Check if exists in transactions table (by searching notes for transaction code)
-        final existsInTransactions = await _existsInTransactionsTable(parsedData.transactionCode);
-
-        // If doesn't exist in either table, it's pending
-        if (!existsInMpesa && !existsInTransactions) {
+        // If doesn't exist, it's pending
+        if (!existsInMpesa) {
           pending.add(PendingTransactionItem(
             message: message,
             parsedData: parsedData,
@@ -107,17 +105,6 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         _error = e.toString();
         _isLoading = false;
       });
-    }
-  }
-
-  Future<bool> _existsInTransactionsTable(String transactionCode) async {
-    try {
-      final transactions = await Transaction.watchUserTransactions().first;
-      return transactions.any((t) => 
-        t.notes != null && t.notes!.contains(transactionCode)
-      );
-    } catch (e) {
-      return false;
     }
   }
 
@@ -441,12 +428,217 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         itemCount: _filteredTransactions.length,
         itemBuilder: (context, index) {
           final item = _filteredTransactions[index];
-          return _PendingTransactionCard(
+          return PendingTransactionCard(
             item: item,
             onProcess: () => _processTransaction(item),
-            onDismiss: () => _dismissTransaction(item),
+            onShowDetails: () => _showTransactionDetails(item),
           );
         },
+      ),
+    );
+  }
+
+  void _showTransactionDetails(PendingTransactionItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) {
+          return SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.phone_android,
+                        color: Colors.green.shade700,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'MPESA Details',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[800],
+                            ),
+                          ),
+                          Text(
+                            EnhancedMpesaParser.getTransactionDescription(item.parsedData),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+                
+                // Transaction details
+                _buildDetailRow('Transaction Code', item.parsedData.transactionCode),
+                _buildDetailRow('Type', item.parsedData.transactionType.name.toUpperCase()),
+                _buildDetailRow('Amount', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.amount)}'),
+                _buildDetailRow('Counterparty', item.parsedData.counterpartyName),
+                
+                if (item.parsedData.counterpartyNumber != null)
+                  _buildDetailRow(
+                    item.parsedData.transactionType == MpesaTransactionType.paybill ? 'Account' : 'Phone',
+                    item.parsedData.counterpartyNumber!,
+                  ),
+                
+                _buildDetailRow(
+                  'Date & Time',
+                  DateFormat('EEEE, MMMM dd, yyyy • h:mm:ss a').format(item.parsedData.transactionDate),
+                ),
+                _buildDetailRow('New Balance', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.newBalance)}'),
+                
+                if (item.parsedData.transactionCost > 0)
+                  _buildDetailRow('Transaction Fee', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.transactionCost)}'),
+                
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 16),
+                
+                // Original SMS
+                Text(
+                  'Original SMS Message',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey[300]!),
+                  ),
+                  child: SelectableText(
+                    item.parsedData.rawMessage,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: item.parsedData.rawMessage));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Message copied to clipboard'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.copy, size: 18),
+                        label: const Text('Copy'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _processTransaction(item);
+                        },
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Add Transaction'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -507,8 +699,8 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
       }
 
       // Create regular transaction
-      await Transaction.create(
-        title: item.parsedData.counterpartyName,
+      final transaction = await Transaction.create(
+        title: EnhancedMpesaParser.getTransactionDescription(item.parsedData),
         amount: item.parsedData.amount,
         type: item.parsedData.isDebit ? TransactionType.expense : TransactionType.income,
         categoryId: mpesaCategory.id,
@@ -517,7 +709,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
       );
 
       // Link them
-      // Note: You'll need to implement the linking mechanism
+      await mpesaTx.linkToTransaction(transaction.id);
 
       // Reload pending transactions
       await _loadPendingTransactions();
@@ -544,16 +736,6 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
     }
   }
 
-  Future<void> _dismissTransaction(PendingTransactionItem item) async {
-    // You could implement a dismiss mechanism here if needed
-    // For now, just show a message
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Transaction dismissed'),
-      ),
-    );
-  }
-
   @override
   void dispose() {
     _searchController.dispose();
@@ -571,15 +753,16 @@ class PendingTransactionItem {
   });
 }
 
-class _PendingTransactionCard extends StatelessWidget {
+class PendingTransactionCard extends StatelessWidget {
   final PendingTransactionItem item;
   final VoidCallback onProcess;
-  final VoidCallback onDismiss;
+  final VoidCallback onShowDetails;
 
-  const _PendingTransactionCard({
+  const PendingTransactionCard({
+    super.key,
     required this.item,
     required this.onProcess,
-    required this.onDismiss,
+    required this.onShowDetails,
   });
 
   @override
@@ -591,7 +774,7 @@ class _PendingTransactionCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 2,
       child: InkWell(
-        onTap: () => _showDetails(context),
+        onTap: onShowDetails,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -667,8 +850,8 @@ class _PendingTransactionCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: onDismiss,
-                    child: const Text('Dismiss'),
+                    onPressed: onShowDetails,
+                    child: const Text('View Details'),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
@@ -685,139 +868,6 @@ class _PendingTransactionCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _showDetails(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.5,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) {
-          return SingleChildScrollView(
-            controller: scrollController,
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Transaction Details',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                _buildDetailRow('Code', item.parsedData.transactionCode),
-                _buildDetailRow('Type', item.parsedData.transactionType.name.toUpperCase()),
-                _buildDetailRow('Amount', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.amount)}'),
-                _buildDetailRow('Counterparty', item.parsedData.counterpartyName),
-                if (item.parsedData.counterpartyNumber != null)
-                  _buildDetailRow('Number', item.parsedData.counterpartyNumber!),
-                _buildDetailRow('New Balance', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.newBalance)}'),
-                if (item.parsedData.transactionCost > 0)
-                  _buildDetailRow('Fee', 'KES ${NumberFormat('#,##0.00').format(item.parsedData.transactionCost)}'),
-                const SizedBox(height: 24),
-                const Text(
-                  'Original SMS',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    item.parsedData.rawMessage,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onDismiss();
-                        },
-                        child: const Text('Dismiss'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onProcess();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Add Transaction'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey[600],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
