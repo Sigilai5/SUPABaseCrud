@@ -44,15 +44,16 @@ class _LocationCaptureWidgetState extends State<LocationCaptureWidget> {
       // Check if permission is permanently denied
       final isDeniedForever = await LocationService.isPermissionDeniedForever();
       if (isDeniedForever && mounted) {
-        await LocationService.showOpenSettingsDialog(context);
+        await _showOpenSettingsDialog();
         setState(() => _isLoading = false);
         return;
       }
 
-      // Request permission if needed
+      // Check if we have permission
       final hasPermission = await LocationService.hasLocationPermission();
       if (!hasPermission && mounted) {
-        final granted = await LocationService.showLocationPermissionDialog(context);
+        // Show permission dialog
+        final granted = await _showPermissionDialog();
         if (!granted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -65,6 +66,25 @@ class _LocationCaptureWidgetState extends State<LocationCaptureWidget> {
           setState(() => _isLoading = false);
           return;
         }
+      }
+
+      // Check if location service is enabled
+      final serviceEnabled = await LocationService.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please enable location services'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: () {
+                LocationService.openLocationSettings();
+              },
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        setState(() => _isLoading = false);
+        return;
       }
 
       // Get current position
@@ -115,6 +135,83 @@ class _LocationCaptureWidgetState extends State<LocationCaptureWidget> {
           ),
         );
       }
+    }
+  }
+
+  Future<bool> _showPermissionDialog() async {
+    final shouldRequest = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.location_on, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Location Permission'),
+          ],
+        ),
+        content: const Text(
+          'This app needs location permission to tag your transactions with location data.\n\n'
+          'This helps you track where you spend money and analyze spending patterns by location.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not Now'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Allow'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRequest == true) {
+      return await LocationService.requestLocationPermission();
+    }
+    
+    return false;
+  }
+
+  Future<void> _showOpenSettingsDialog() async {
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.settings, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Permission Required'),
+          ],
+        ),
+        content: const Text(
+          'Location permission was permanently denied. '
+          'Please enable it in your device settings to use this feature.\n\n'
+          'Settings > Apps > Expense Tracker > Permissions > Location',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldOpen == true) {
+      await LocationService.openLocationSettings();
     }
   }
 

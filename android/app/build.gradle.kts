@@ -42,3 +42,8 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Add Google Play Services Location for accessing device location
+    implementation("com.google.android.gms:play-services-location:21.0.1")
+}

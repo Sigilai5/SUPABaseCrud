@@ -47,19 +47,101 @@ class LocationService {
     return true;
   }
 
+  /// Show a dialog to request location permission with explanation
+  static Future<bool> showLocationPermissionDialog(BuildContext context) async {
+    final shouldRequest = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.location_on, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Location Permission'),
+          ],
+        ),
+        content: const Text(
+          'This app needs location permission to tag your transactions with location data.\n\n'
+          'This helps you track where you spend money and analyze spending patterns by location.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not Now'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Allow'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRequest == true) {
+      return await requestLocationPermission();
+    }
+    
+    return false;
+  }
+
+  /// Show dialog to open app settings when permission is permanently denied
+  static Future<void> showOpenSettingsDialog(BuildContext context) async {
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.settings, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Permission Required'),
+          ],
+        ),
+        content: const Text(
+          'Location permission was permanently denied. '
+          'Please enable it in your device settings to use this feature.\n\n'
+          'Settings > Apps > Expense Tracker > Permissions > Location',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldOpen == true) {
+      await openLocationSettings();
+    }
+  }
+
   /// Get the current position of the device
   /// Returns null if location cannot be obtained
   static Future<Position?> getCurrentPosition() async {
     try {
       // Check if we have permission
-      final hasPermission = await hasLocationPermission();
+      final hasPermission = await LocationService.hasLocationPermission();
       if (!hasPermission) {
-        print('$_tag: No location permission, requesting...');
-        final granted = await requestLocationPermission();
-        if (!granted) {
-          print('$_tag: Location permission not granted');
-          return null;
-        }
+        print('$_tag: No location permission');
+        return null;
+      }
+
+      // Check if location service is enabled
+      final serviceEnabled = await isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('$_tag: Location service is disabled');
+        return null;
       }
 
       // Get current position with timeout
@@ -77,8 +159,7 @@ class LocationService {
   }
 
   /// Get a formatted address string from coordinates
-  /// Note: This requires a geocoding service (not included in geolocator)
-  /// Returns a simple coordinate string for now
+  /// Returns a simple coordinate string
   static String formatLocation(double latitude, double longitude) {
     return '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
   }
@@ -120,5 +201,32 @@ class LocationService {
   static Future<bool> isPermissionDeniedForever() async {
     final permission = await Geolocator.checkPermission();
     return permission == LocationPermission.deniedForever;
+  }
+
+  /// Get detailed location info for debugging
+  static Future<Map<String, dynamic>> getLocationInfo() async {
+    final serviceEnabled = await isLocationServiceEnabled();
+    final permission = await Geolocator.checkPermission();
+    final hasPermission = await LocationService.hasLocationPermission();
+    final isDeniedForever = await isPermissionDeniedForever();
+    
+    Position? position;
+    try {
+      if (hasPermission && serviceEnabled) {
+        position = await getCurrentPosition();
+      }
+    } catch (e) {
+      print('$_tag: Error getting position: $e');
+    }
+
+    return {
+      'service_enabled': serviceEnabled,
+      'permission_status': permission.toString(),
+      'has_permission': hasPermission,
+      'denied_forever': isDeniedForever,
+      'latitude': position?.latitude,
+      'longitude': position?.longitude,
+      'accuracy': position?.accuracy,
+    };
   }
 }

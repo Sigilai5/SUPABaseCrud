@@ -59,11 +59,19 @@ class MpesaService {
               recipient: _pendingTransaction!.recipient,
             );
             
+            // Extract location data
+            final latitude = data['latitude'] as double?;
+            final longitude = data['longitude'] as double?;
+            
             print('Calling _saveTransaction with categoryId: ${data['categoryId']}');
+            print('Location: $latitude, $longitude');
+            
             await _saveTransaction(
               updatedTransaction,
               customNotes: data['notes'] as String?,
               categoryId: data['categoryId'] as String?,
+              latitude: latitude,
+              longitude: longitude,
             );
             print('Transaction saved successfully');
           } else {
@@ -87,27 +95,21 @@ class MpesaService {
   static Future<void> _handleMpesaSms(String sender, String message) async {
     print('Processing MPESA SMS: $message');
     
-    // Parse the message
     final mpesaTransaction = MpesaParser.parse(message);
     if (mpesaTransaction == null) {
       print('Could not parse MPESA message');
       return;
     }
 
-    // Save as pending message FIRST (before anything else)
     await _savePendingMessage(sender, message, mpesaTransaction);
-
-    // Store pending transaction for overlay
     _pendingTransaction = mpesaTransaction;
 
-    // Check overlay permission
     final hasPermission = await hasOverlayPermission();
     if (!hasPermission) {
       print('No overlay permission - transaction saved as pending');
-      return; // Don't auto-save, just keep as pending
+      return;
     }
 
-    // Show overlay
     await _showTransactionOverlay(mpesaTransaction, sender);
   }
 
@@ -117,7 +119,6 @@ class MpesaService {
     MpesaTransaction mpesaTransaction,
   ) async {
     try {
-      // Save to pending_mpesa table
       await PendingMpesa.create(
         rawMessage: message,
         sender: sender,
@@ -139,7 +140,6 @@ class MpesaService {
       print('=== Saving Dismissed Transaction to Pending ===');
       print('Data: $data');
       
-      // Extract transaction details from dismiss data
       final title = data['title'] as String? ?? 'Unknown Transaction';
       final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
       final type = data['type'] as String? ?? 'expense';
@@ -147,7 +147,6 @@ class MpesaService {
       final sender = data['sender'] as String? ?? 'MPESA';
       final rawMessage = data['rawMessage'] as String? ?? '';
       
-      // Save to pending_mpesa table so user can review it later
       await PendingMpesa.create(
         rawMessage: rawMessage,
         sender: sender,
@@ -160,7 +159,6 @@ class MpesaService {
       
       print('✓ Dismissed transaction saved to pending_mpesa table');
       
-      // Now remove from SharedPreferences
       try {
         if (transactionCode.isNotEmpty && transactionCode != 'UNKNOWN') {
           await _channel.invokeMethod('removePendingTransaction', {
@@ -184,6 +182,8 @@ class MpesaService {
     MpesaTransaction mpesaTransaction, {
     String? customNotes,
     String? categoryId,
+    double? latitude,
+    double? longitude,
   }) async {
     try {
       print('=== Saving Transaction ===');
@@ -191,6 +191,7 @@ class MpesaService {
       print('Amount: ${mpesaTransaction.amount}');
       print('Type: ${mpesaTransaction.type}');
       print('Category ID: $categoryId');
+      print('Location: $latitude, $longitude');
       
       Category? mpesaCategory;
       
@@ -223,7 +224,7 @@ class MpesaService {
       final notes = customNotes ?? 
           'Auto-detected from MPESA SMS\nCode: ${mpesaTransaction.transactionCode}';
 
-      // Create the transaction
+      // Create the transaction with location
       final transaction = await Transaction.create(
         title: mpesaTransaction.title,
         amount: mpesaTransaction.amount,
@@ -233,11 +234,15 @@ class MpesaService {
         categoryId: mpesaCategory.id,
         date: mpesaTransaction.date,
         notes: notes,
+        latitude: latitude,
+        longitude: longitude,
       );
 
       print('✓ Transaction saved successfully with ID: ${transaction.id}');
+      if (latitude != null && longitude != null) {
+        print('✓ Location saved: $latitude, $longitude');
+      }
       
-      // Remove from pending_mpesa table (if exists)
       if (mpesaTransaction.transactionCode.isNotEmpty) {
         try {
           await PendingMpesa.deleteByTransactionCode(
@@ -246,11 +251,9 @@ class MpesaService {
           print('✓ Removed from pending_mpesa table');
         } catch (e) {
           print('Note: Could not remove from pending_mpesa table: $e');
-          // This is OK - might not exist in the table
         }
       }
       
-      // Remove from SharedPreferences
       try {
         if (mpesaTransaction.transactionCode.isNotEmpty) {
           await _channel.invokeMethod('removePendingTransaction', {
@@ -301,7 +304,6 @@ class MpesaService {
       });
     } catch (e) {
       print('Error showing overlay: $e');
-      // If overlay fails, message is already saved as pending
     }
   }
 
@@ -348,21 +350,17 @@ class MpesaService {
       
       print('Found ${pendingList.length} pending transactions to process');
       
-      // Track successful and failed transactions
       int successCount = 0;
       int failCount = 0;
       
-      // Save each to the database
       for (var item in pendingList) {
         try {
           final Map<String, dynamic> data = Map<String, dynamic>.from(item);
           
           print('Processing transaction: ${data['title']}');
           
-          // Check if it has categoryId (from overlay) or needs default
           String? categoryId = data['categoryId'] as String?;
           
-          // Handle empty string as null
           if (categoryId != null && categoryId.isEmpty) {
             categoryId = null;
           }
@@ -370,7 +368,6 @@ class MpesaService {
           if (categoryId == null) {
             print('No categoryId provided, getting MPESA category...');
             
-            // Get or create MPESA category
             final categories = await Category.watchUserCategories().first;
             Category? mpesaCategory;
             
@@ -394,7 +391,6 @@ class MpesaService {
             print('Using provided categoryId: $categoryId');
           }
           
-          // Create MpesaTransaction object
           final mpesaTransaction = MpesaTransaction(
             title: data['title'] as String,
             amount: (data['amount'] as num).toDouble(),
@@ -404,17 +400,21 @@ class MpesaService {
             rawMessage: '',
           );
           
-          // Get notes if available
           String? notes = data['notes'] as String?;
           if (notes != null && notes.isEmpty) {
             notes = null;
           }
           
-          // Save to database
+          // Extract location if available
+          final latitude = data['latitude'] as double?;
+          final longitude = data['longitude'] as double?;
+          
           await _saveTransaction(
             mpesaTransaction,
             customNotes: notes,
             categoryId: categoryId,
+            latitude: latitude,
+            longitude: longitude,
           );
           
           successCount++;
@@ -430,7 +430,6 @@ class MpesaService {
       print('=== Processing Complete ===');
       print('Success: $successCount, Failed: $failCount');
       
-      // Only clear after processing (successful or not)
       if (successCount > 0 || failCount > 0) {
         await _channel.invokeMethod('clearPendingTransactions');
         print('✓ Cleared all pending transactions from SharedPreferences');
@@ -442,7 +441,6 @@ class MpesaService {
     }
   }
 
-  // Debug method to view SharedPreferences content
   static Future<List<Map<String, dynamic>>> getPendingTransactionsFromSharedPrefs() async {
     try {
       final List<dynamic>? result = await _channel.invokeMethod('getPendingTransactions');

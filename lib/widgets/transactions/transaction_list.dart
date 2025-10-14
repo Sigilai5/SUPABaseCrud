@@ -1,6 +1,4 @@
 // lib/widgets/transactions/transaction_list.dart
-// COMPLETE FILE - Replace your entire transaction_list.dart with this
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -8,7 +6,7 @@ import '../../models/transaction.dart';
 import '../../models/category.dart';
 import '../../powersync.dart';
 import 'transaction_form.dart';
-import '../common/location_display_widget.dart'; // NEW: Location import
+import '../common/location_display_widget.dart';
 
 class TransactionList extends StatelessWidget {
   const TransactionList({super.key});
@@ -520,7 +518,6 @@ class TransactionList extends StatelessWidget {
 
 enum SpendingPeriod { today, week, month }
 
-// UPDATED PeriodDetailsPage with Location Support
 class PeriodDetailsPage extends StatelessWidget {
   final String title;
   final List<Transaction> transactions;
@@ -729,4 +726,139 @@ class PeriodDetailsPage extends StatelessWidget {
                                     if (dayExpenses > 0)
                                       Text(
                                         '-${NumberFormat('#,##0').format(dayExpenses)}',
-                                        style: Text
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.red.shade700,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          ...dayTransactions.map((transaction) => 
+                            TransactionItemWidget(transaction: transaction)
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class TransactionItemWidget extends StatelessWidget {
+  final Transaction transaction;
+
+  const TransactionItemWidget({super.key, required this.transaction});
+
+  @override
+  Widget build(BuildContext context) {
+    final isIncome = transaction.type == TransactionType.income;
+    
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => TransactionForm(transaction: transaction),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isIncome 
+                          ? Colors.green.withOpacity(0.1)
+                          : Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      isIncome ? Icons.arrow_downward : Icons.arrow_upward,
+                      color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          transaction.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        FutureBuilder<Category?>(
+                          future: Category.getById(transaction.categoryId),
+                          builder: (context, snapshot) {
+                            final categoryName = snapshot.data?.name ?? 'Unknown';
+                            return Text(
+                              categoryName,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    'KES ${NumberFormat('#,##0').format(transaction.amount)}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Show location if available
+              if (transaction.hasLocation()) ...[
+                const SizedBox(height: 8),
+                LocationChip(
+                  latitude: transaction.latitude!,
+                  longitude: transaction.longitude!,
+                ),
+              ],
+              
+              // Show notes if available
+              if (transaction.notes != null && transaction.notes!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  transaction.notes!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -1,12 +1,15 @@
 package com.example.crud
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.PixelFormat
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -15,7 +18,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.location.*
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import java.text.SimpleDateFormat
@@ -29,6 +34,12 @@ class OverlayService : Service() {
     private val PREFS_NAME = "MpesaPrefs"
     private val PENDING_TRANSACTIONS = "pending_transactions"
     private var transactionCode: String? = null
+
+    // Location
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var currentLatitude: Double? = null
+    private var currentLongitude: Double? = null
+    private var isCapturingLocation = false
 
     // Store original transaction data
     private var originalAmount: Double = 0.0
@@ -46,6 +57,9 @@ class OverlayService : Service() {
     private lateinit var tvSender: TextView
     private lateinit var spinnerCategory: Spinner
     private lateinit var tvDate: TextView
+    private lateinit var btnCaptureLocation: Button
+    private lateinit var tvLocationStatus: TextView
+    private lateinit var locationContainer: View
 
     // Categories received from Flutter
     private var categories = mutableListOf<Category>()
@@ -54,6 +68,10 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Initialize location client
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
         createNotificationChannel()
         startForeground(1, createNotification())
 
@@ -68,9 +86,15 @@ class OverlayService : Service() {
         tvSender = overlayView.findViewById(R.id.tvSender)
         spinnerCategory = overlayView.findViewById(R.id.spinnerCategory)
         tvDate = overlayView.findViewById(R.id.tvDate)
+        btnCaptureLocation = overlayView.findViewById(R.id.btnCaptureLocation)
+        tvLocationStatus = overlayView.findViewById(R.id.tvLocationStatus)
+        locationContainer = overlayView.findViewById(R.id.locationContainer)
 
         setupWindowManager()
         setupClickListeners()
+
+        // Auto-capture location on start
+        captureLocation()
     }
 
     private fun createNotificationChannel() {
@@ -115,13 +139,113 @@ class OverlayService : Service() {
         windowManager.addView(overlayView, params)
     }
 
+    private fun captureLocation() {
+        if (isCapturingLocation) return
+
+        // Check permission
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "Location permission not granted")
+            updateLocationUI(false, "Permission not granted")
+            return
+        }
+
+        isCapturingLocation = true
+        updateLocationUI(true, "Getting location...")
+
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
+                isCapturingLocation = false
+                if (location != null) {
+                    currentLatitude = location.latitude
+                    currentLongitude = location.longitude
+                    Log.d(TAG, "Location captured: $currentLatitude, $currentLongitude")
+                    updateLocationUI(false, "Location captured")
+                } else {
+                    Log.w(TAG, "Location is null, requesting fresh location")
+                    requestFreshLocation()
+                }
+            }.addOnFailureListener { e ->
+                isCapturingLocation = false
+                Log.e(TAG, "Failed to get location: ${e.message}")
+                updateLocationUI(false, "Failed to get location")
+            }
+        } catch (e: Exception) {
+            isCapturingLocation = false
+            Log.e(TAG, "Error capturing location: ${e.message}")
+            updateLocationUI(false, "Error: ${e.message}")
+        }
+    }
+
+    private fun requestFreshLocation() {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            updateLocationUI(false, "Permission not granted")
+            return
+        }
+
+        val locationRequest = LocationRequest.create().apply {
+            priority = LocationRequest.PRIORITY_HIGH_ACCURACY
+            numUpdates = 1
+            interval = 0
+        }
+
+        val locationCallback = object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult) {
+                isCapturingLocation = false
+                locationResult.lastLocation?.let { location ->
+                    currentLatitude = location.latitude
+                    currentLongitude = location.longitude
+                    Log.d(TAG, "Fresh location captured: $currentLatitude, $currentLongitude")
+                    updateLocationUI(false, "Location captured")
+                }
+                fusedLocationClient.removeLocationUpdates(this)
+            }
+        }
+
+        fusedLocationClient.requestLocationUpdates(
+            locationRequest,
+            locationCallback,
+            null
+        )
+    }
+
+    private fun updateLocationUI(isLoading: Boolean, message: String) {
+        btnCaptureLocation.isEnabled = !isLoading
+        tvLocationStatus.text = message
+
+        if (currentLatitude != null && currentLongitude != null) {
+            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_green_dark))
+            btnCaptureLocation.text = "Update Location"
+        } else if (isLoading) {
+            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_blue_dark))
+            btnCaptureLocation.text = "Getting..."
+        } else {
+            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_orange_dark))
+            btnCaptureLocation.text = "Capture Location"
+        }
+    }
+
     private fun setupCategorySpinner(categoriesList: List<Map<String, Any>>) {
         Log.d(TAG, "Setting up spinner with ${categoriesList.size} categories")
 
         categories.clear()
 
         if (categoriesList.isEmpty()) {
-            // Add default MPESA category if no categories provided
             Log.w(TAG, "No categories received, using default MPESA category")
             categories.add(Category("mpesa", "MPESA", "both", "#4CAF50", "payments"))
         } else {
@@ -145,14 +269,12 @@ class OverlayService : Service() {
         val adapter = CategorySpinnerAdapter(this, categories)
         spinnerCategory.adapter = adapter
 
-        // Find and select MPESA category by default
         val mpesaIndex = categories.indexOfFirst { it.name.equals("MPESA", ignoreCase = true) }
         if (mpesaIndex >= 0) {
             spinnerCategory.setSelection(mpesaIndex)
             selectedCategoryId = categories[mpesaIndex].id
             Log.d(TAG, "Selected MPESA category at index $mpesaIndex")
         } else {
-            // Select first category as fallback
             selectedCategoryId = categories.firstOrNull()?.id
             Log.d(TAG, "MPESA not found, selected first category: $selectedCategoryId")
         }
@@ -170,6 +292,12 @@ class OverlayService : Service() {
     }
 
     private fun setupClickListeners() {
+        // Location capture button
+        btnCaptureLocation.setOnClickListener {
+            captureLocation()
+        }
+
+        // Save button
         overlayView.findViewById<Button>(R.id.btnSave).setOnClickListener {
             Log.d(TAG, "=== Save button clicked ===")
 
@@ -181,6 +309,7 @@ class OverlayService : Service() {
             Log.d(TAG, "Amount: $originalAmount")
             Log.d(TAG, "Type: $originalType")
             Log.d(TAG, "Selected Category ID: $selectedCategoryId")
+            Log.d(TAG, "Location: $currentLatitude, $currentLongitude")
 
             if (editedTitle.isEmpty()) {
                 Toast.makeText(this, "Please enter a title", Toast.LENGTH_SHORT).show()
@@ -197,14 +326,16 @@ class OverlayService : Service() {
             Log.d(TAG, "Flutter engine available: ${engine != null}")
 
             if (engine != null) {
-                val transactionData = mapOf(
+                val transactionData = mutableMapOf<String, Any?>(
                     "confirmed" to true,
                     "title" to editedTitle,
                     "amount" to originalAmount,
                     "type" to originalType,
                     "categoryId" to selectedCategoryId!!,
                     "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
-                    "transactionCode" to transactionCode
+                    "transactionCode" to transactionCode,
+                    "latitude" to currentLatitude,
+                    "longitude" to currentLongitude
                 )
 
                 Log.d(TAG, "Sending transaction data to Flutter: $transactionData")
@@ -228,13 +359,13 @@ class OverlayService : Service() {
             stopSelf()
         }
 
+        // Dismiss button
         overlayView.findViewById<Button>(R.id.btnDismiss).setOnClickListener {
             Log.d(TAG, "=== Dismiss button clicked ===")
 
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
 
             if (engine != null) {
-                // Send the full transaction data to Flutter so it can save to pending_mpesa table
                 val dismissData = mapOf(
                     "confirmed" to false,
                     "title" to originalTitle,
@@ -259,8 +390,6 @@ class OverlayService : Service() {
                 }
             } else {
                 Log.d(TAG, "Flutter not available - keeping in SharedPreferences for later")
-                // If Flutter isn't available, just leave it in SharedPreferences
-                // It will be handled when the app opens
                 Toast.makeText(this, "Transaction dismissed - will sync when app opens", Toast.LENGTH_SHORT).show()
             }
 
@@ -283,6 +412,8 @@ class OverlayService : Service() {
                     "categoryId": "$categoryId",
                     "transactionCode": "$transactionCode",
                     "notes": "$escapedNotes",
+                    "latitude": $currentLatitude,
+                    "longitude": $currentLongitude,
                     "timestamp": ${System.currentTimeMillis()}
                 }
             """.trimIndent()
@@ -295,7 +426,7 @@ class OverlayService : Service() {
             }
 
             prefs.edit().putString(PENDING_TRANSACTIONS, updatedJson).apply()
-            Log.d(TAG, "Transaction with edits saved to SharedPreferences")
+            Log.d(TAG, "Transaction with edits and location saved to SharedPreferences")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error saving pending transaction with edits: ${e.message}", e)
@@ -311,7 +442,6 @@ class OverlayService : Service() {
             val rawMessage = it.getStringExtra("rawMessage") ?: ""
             transactionCode = it.getStringExtra("transactionCode")
 
-            // Store original data
             originalTitle = title
             originalAmount = amount
             originalType = type
@@ -325,7 +455,6 @@ class OverlayService : Service() {
             Log.d(TAG, "Sender: $sender")
             Log.d(TAG, "Transaction Code: $transactionCode")
 
-            // Get categories from intent
             val categoriesData = it.getSerializableExtra("categories") as? ArrayList<HashMap<String, Any>>
             Log.d(TAG, "Received ${categoriesData?.size ?: 0} categories from Flutter")
 
@@ -336,20 +465,16 @@ class OverlayService : Service() {
                 setupCategorySpinner(emptyList())
             }
 
-            // Populate UI fields
             etTitle.setText(title)
             tvAmount.text = String.format("%.2f", amount)
             tvType.text = type.uppercase()
             tvSender.text = "From: $sender"
 
-            // Format current date
             val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
             tvDate.text = dateFormat.format(Date())
 
-            // Pre-fill notes with transaction code
             etNotes.setText("Auto-detected from MPESA SMS\nCode: $transactionCode")
 
-            // Update type badge and amount color
             if (type == "income") {
                 tvType.setBackgroundColor(android.graphics.Color.parseColor("#E8F5E9"))
                 tvType.setTextColor(android.graphics.Color.parseColor("#4CAF50"))
@@ -378,7 +503,6 @@ class OverlayService : Service() {
     }
 }
 
-// Custom Spinner Adapter
 class CategorySpinnerAdapter(
     context: Context,
     private val categories: List<Category>
@@ -399,7 +523,6 @@ class CategorySpinnerAdapter(
             val color = android.graphics.Color.parseColor(category.color)
             textView.setTextColor(color)
         } catch (e: Exception) {
-            // Use default color if parsing fails
             textView.setTextColor(android.graphics.Color.BLACK)
         }
 
@@ -419,7 +542,6 @@ class CategorySpinnerAdapter(
             val color = android.graphics.Color.parseColor(category.color)
             textView.setTextColor(color)
         } catch (e: Exception) {
-            // Use default color if parsing fails
             textView.setTextColor(android.graphics.Color.BLACK)
         }
 
