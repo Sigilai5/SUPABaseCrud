@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/mpesa_transaction.dart';
 import '../../models/transaction.dart';
 import '../../models/category.dart';
@@ -25,14 +26,47 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
   String? _error;
   String _filterQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  DateTime? _userCreatedAt;
 
   @override
   void initState() {
     super.initState();
-    _loadPendingTransactions();
+    _getUserCreationDate();
+  }
+
+  Future<void> _getUserCreationDate() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null && user.createdAt != null) {
+        setState(() {
+          _userCreatedAt = DateTime.parse(user.createdAt!);
+        });
+        print('User account created at: $_userCreatedAt');
+      } else {
+        setState(() {
+          _userCreatedAt = DateTime.now();
+        });
+        print('User creation date not available, using current time');
+      }
+      await _loadPendingTransactions();
+    } catch (e) {
+      print('Error getting user creation date: $e');
+      setState(() {
+        _userCreatedAt = DateTime.now();
+      });
+      await _loadPendingTransactions();
+    }
   }
 
   Future<void> _loadPendingTransactions() async {
+    if (_userCreatedAt == null) {
+      setState(() {
+        _error = 'Could not determine account creation date';
+        _isLoading = false;
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -58,15 +92,28 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         count: 1000,
       );
 
-      // Filter for MPESA messages
+      print('Total SMS messages: ${allMessages.length}');
+
+      // Filter for MPESA messages received AFTER user account creation
       final mpesaMessages = allMessages.where((message) {
         final sender = message.address?.toUpperCase() ?? '';
         final body = message.body?.toUpperCase() ?? '';
-        return sender.contains('MPESA') || 
+        final messageDate = message.date;
+        
+        // Check if it's an MPESA message
+        final isMpesa = sender.contains('MPESA') || 
                sender.contains('M-PESA') ||
                body.contains('MPESA') ||
                body.contains('M-PESA');
+        
+        // Check if message was received after account creation
+        final isAfterCreation = messageDate != null && 
+                                messageDate.isAfter(_userCreatedAt!);
+        
+        return isMpesa && isAfterCreation;
       }).toList();
+
+      print('MPESA messages after account creation: ${mpesaMessages.length}');
 
       // Process each message and check if it exists in database
       List<PendingTransactionItem> pending = [];
@@ -75,12 +122,17 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         final body = message.body ?? '';
         final parsedData = EnhancedMpesaParser.parse(body);
         
-        if (parsedData == null) continue;
+        if (parsedData == null) {
+          print('Could not parse MPESA message: ${body.substring(0, 50)}...');
+          continue;
+        }
 
         // Check if exists in mpesa_transactions table
         final existsInMpesa = await MpesaTransaction.exists(parsedData.transactionCode);
         
-        // If doesn't exist, it's pending
+        print('Transaction ${parsedData.transactionCode}: ${existsInMpesa ? "EXISTS" : "PENDING"}');
+        
+        // If doesn't exist in MPESA table, it's pending
         if (!existsInMpesa) {
           pending.add(PendingTransactionItem(
             message: message,
@@ -100,7 +152,11 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
         _pendingTransactions = pending;
         _isLoading = false;
       });
-    } catch (e) {
+
+      print('Total pending transactions: ${pending.length}');
+    } catch (e, stackTrace) {
+      print('Error loading pending transactions: $e');
+      print('Stack trace: $stackTrace');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -178,7 +234,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
       body: Column(
         children: [
           // Info Banner
-          if (_hasPermission && !_isLoading) ...[
+          if (_hasPermission && !_isLoading && _userCreatedAt != null) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -216,8 +272,8 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
                         const SizedBox(height: 4),
                         Text(
                           _pendingTransactions.isEmpty
-                              ? 'No unrecorded MPESA transactions found'
-                              : 'These SMS messages haven\'t been recorded yet',
+                              ? 'All MPESA SMS since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)} have been recorded'
+                              : 'These MPESA messages haven\'t been recorded yet',
                           style: TextStyle(
                             fontSize: 12,
                             color: _pendingTransactions.isEmpty 
@@ -313,7 +369,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _loadPendingTransactions,
+              onPressed: _getUserCreationDate,
               child: const Text('Retry'),
             ),
           ],
@@ -397,7 +453,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
                 _filterQuery.isEmpty
-                    ? 'All your MPESA transactions have been recorded'
+                    ? 'All your MPESA transactions since account creation have been recorded'
                     : 'No pending transactions match your search',
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -430,7 +486,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
           final item = _filteredTransactions[index];
           return PendingTransactionCard(
             item: item,
-            onProcess: () => _processTransaction(item),
+            onAddAsTransaction: () => _addAsTransaction(item),
             onShowDetails: () => _showTransactionDetails(item),
           );
         },
@@ -592,7 +648,7 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
                       child: ElevatedButton.icon(
                         onPressed: () {
                           Navigator.pop(context);
-                          _processTransaction(item);
+                          _addAsTransaction(item);
                         },
                         icon: const Icon(Icons.add, size: 18),
                         label: const Text('Add Transaction'),
@@ -643,96 +699,59 @@ class _ComprehensivePendingPageState extends State<ComprehensivePendingPage> {
     );
   }
 
-  Future<void> _processTransaction(PendingTransactionItem item) async {
-    try {
-      // Show loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Processing transaction...'),
-                ],
-              ),
-            ),
-          ),
+  Future<void> _addAsTransaction(PendingTransactionItem item) async {
+    // Navigate to transaction form with pre-filled data
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => TransactionForm(
+          initialTitle: EnhancedMpesaParser.getTransactionDescription(item.parsedData),
+          initialAmount: item.parsedData.amount,
+          initialType: item.parsedData.isDebit ? TransactionType.expense : TransactionType.income,
+          initialNotes: EnhancedMpesaParser.generateNotes(item.parsedData),
         ),
-      );
+      ),
+    );
 
-      // Create MPESA transaction
-      final mpesaTx = await MpesaTransaction.create(
-        transactionCode: item.parsedData.transactionCode,
-        transactionType: item.parsedData.transactionType,
-        amount: item.parsedData.amount,
-        counterpartyName: item.parsedData.counterpartyName,
-        counterpartyNumber: item.parsedData.counterpartyNumber,
-        transactionDate: item.parsedData.transactionDate,
-        newBalance: item.parsedData.newBalance,
-        transactionCost: item.parsedData.transactionCost,
-        isDebit: item.parsedData.isDebit,
-        rawMessage: item.parsedData.rawMessage,
-        notes: EnhancedMpesaParser.generateNotes(item.parsedData),
-      );
-
-      // Get or create MPESA category
-      final categories = await Category.watchUserCategories().first;
-      Category? mpesaCategory;
-      
+    // If transaction was created, create the MPESA transaction record
+    if (result == true && mounted) {
       try {
-        mpesaCategory = categories.firstWhere(
-          (cat) => cat.name.toLowerCase() == 'mpesa',
+        // Create MPESA transaction record
+        await MpesaTransaction.create(
+          transactionCode: item.parsedData.transactionCode,
+          transactionType: item.parsedData.transactionType,
+          amount: item.parsedData.amount,
+          counterpartyName: item.parsedData.counterpartyName,
+          counterpartyNumber: item.parsedData.counterpartyNumber,
+          transactionDate: item.parsedData.transactionDate,
+          newBalance: item.parsedData.newBalance,
+          transactionCost: item.parsedData.transactionCost,
+          isDebit: item.parsedData.isDebit,
+          rawMessage: item.parsedData.rawMessage,
+          notes: EnhancedMpesaParser.generateNotes(item.parsedData),
         );
+
+        // Reload pending transactions
+        await _loadPendingTransactions();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transaction recorded successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } catch (e) {
-        mpesaCategory = await Category.create(
-          name: 'MPESA',
-          type: 'both',
-          color: '#4CAF50',
-          icon: 'payments',
-        );
+        print('Error creating MPESA transaction record: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Warning: Transaction created but tracking may be incomplete: $e'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
       }
-
-      // Create regular transaction
-      final transaction = await Transaction.create(
-        title: EnhancedMpesaParser.getTransactionDescription(item.parsedData),
-        amount: item.parsedData.amount,
-        type: item.parsedData.isDebit ? TransactionType.expense : TransactionType.income,
-        categoryId: mpesaCategory.id,
-        date: item.parsedData.transactionDate,
-        notes: EnhancedMpesaParser.generateNotes(item.parsedData),
-      );
-
-      // Link them
-      await mpesaTx.linkToTransaction(transaction.id);
-
-      // Reload pending transactions
-      await _loadPendingTransactions();
-
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Transaction processed successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
@@ -755,13 +774,13 @@ class PendingTransactionItem {
 
 class PendingTransactionCard extends StatelessWidget {
   final PendingTransactionItem item;
-  final VoidCallback onProcess;
+  final VoidCallback onAddAsTransaction;
   final VoidCallback onShowDetails;
 
   const PendingTransactionCard({
     super.key,
     required this.item,
-    required this.onProcess,
+    required this.onAddAsTransaction,
     required this.onShowDetails,
   });
 
@@ -855,7 +874,7 @@ class PendingTransactionCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
-                    onPressed: onProcess,
+                    onPressed: onAddAsTransaction,
                     icon: const Icon(Icons.add, size: 18),
                     label: const Text('Add'),
                     style: ElevatedButton.styleFrom(
