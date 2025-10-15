@@ -176,6 +176,7 @@ class MpesaService {
     try {
       print('=== Saving MPESA transaction as regular transaction ===');
       print('MPESA ID: ${mpesaTx.id}');
+      print('Transaction Code: ${mpesaTx.transactionCode}');
       print('Title: $editedTitle');
       print('Amount: ${mpesaTx.amount}');
       print('Type: ${mpesaTx.isDebit ? 'expense' : 'income'}');
@@ -233,9 +234,49 @@ class MpesaService {
         print('✓ Location saved: $latitude, $longitude');
       }
       
-      // Link the MPESA transaction to the regular transaction
-      await mpesaTx.linkToTransaction(transaction.id);
-      print('✓ MPESA transaction linked to regular transaction');
+      // CRITICAL: Get the MPESA transaction from database to ensure we have the latest version
+      print('Fetching MPESA transaction from database for linking...');
+      final mpesaFromDb = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+      
+      if (mpesaFromDb != null) {
+        // Link the MPESA transaction to the regular transaction
+        print('Linking MPESA transaction ${mpesaFromDb.id} to transaction ${transaction.id}');
+        await mpesaFromDb.linkToTransaction(transaction.id);
+        print('✓ MPESA transaction ${mpesaFromDb.transactionCode} linked to transaction ${transaction.id}');
+        
+        // Verify the link was created
+        final verifyMpesa = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+        if (verifyMpesa?.linkedTransactionId == transaction.id) {
+          print('✓ Verified: Link successfully created');
+        } else {
+          print('⚠ Warning: Link verification failed');
+          print('  Expected linked_transaction_id: ${transaction.id}');
+          print('  Actual linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
+        }
+      } else {
+        print('⚠ Warning: Could not find MPESA transaction in database');
+        print('Creating new MPESA transaction entry...');
+        
+        // Create the MPESA transaction if it doesn't exist
+        final newMpesaTx = await MpesaTransaction.create(
+          transactionCode: mpesaTx.transactionCode,
+          transactionType: mpesaTx.transactionType,
+          amount: mpesaTx.amount,
+          counterpartyName: mpesaTx.counterpartyName,
+          counterpartyNumber: mpesaTx.counterpartyNumber,
+          transactionDate: mpesaTx.transactionDate,
+          newBalance: mpesaTx.newBalance,
+          transactionCost: mpesaTx.transactionCost,
+          isDebit: mpesaTx.isDebit,
+          rawMessage: mpesaTx.rawMessage,
+          notes: mpesaTx.notes,
+        );
+        
+        print('✓ Created new MPESA transaction: ${newMpesaTx.id}');
+        
+        await newMpesaTx.linkToTransaction(transaction.id);
+        print('✓ Linked new MPESA transaction to regular transaction');
+      }
       
       // Clear from any pending stores
       try {
@@ -358,7 +399,9 @@ class MpesaService {
             rawMessage: 'Recovered from offline storage',
           );
           
-          // Now create regular transaction
+          print('✓ Created MPESA transaction: ${mpesaTx.id}');
+          
+          // Now create regular transaction and link it
           String? notes = data['notes'] as String?;
           if (notes != null && notes.isEmpty) {
             notes = null;
