@@ -5,6 +5,7 @@ import 'mpesa_parser.dart';
 import '../models/transaction.dart';
 import '../models/category.dart';
 import '../models/mpesa_transaction.dart';
+import '../powersync.dart';
 
 class MpesaService {
   static const MethodChannel _channel = MethodChannel('com.example.crud/mpesa');
@@ -234,66 +235,85 @@ class MpesaService {
         print('✓ Location saved: $latitude, $longitude');
       }
       
-      // CRITICAL FIX: Wait a moment for the transaction to be committed
-      await Future.delayed(const Duration(milliseconds: 100));
+      // CRITICAL FIX: Get fresh MPESA transaction from database using transaction code
+      print('Fetching fresh MPESA transaction from database...');
       
-      // Get fresh MPESA transaction from database with retries
       MpesaTransaction? mpesaFromDb;
       int retryCount = 0;
-      const maxRetries = 3;
+      const maxRetries = 5;
       
       while (mpesaFromDb == null && retryCount < maxRetries) {
-        print('Attempt ${retryCount + 1}: Fetching MPESA transaction from database...');
+        // Progressive delay: 100ms, 200ms, 300ms, 400ms, 500ms
+        await Future.delayed(Duration(milliseconds: 100 * (retryCount + 1)));
+        print('Attempt ${retryCount + 1}: Fetching MPESA transaction by code...');
         mpesaFromDb = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
-        
-        if (mpesaFromDb == null) {
-          retryCount++;
-          if (retryCount < maxRetries) {
-            print('MPESA transaction not found, waiting before retry...');
-            await Future.delayed(Duration(milliseconds: 200 * retryCount));
-          }
-        }
+        retryCount++;
       }
       
-      if (mpesaFromDb != null) {
-        print('✓ Found MPESA transaction: ${mpesaFromDb.id}');
-        print('Linking MPESA transaction ${mpesaFromDb.id} to transaction ${transaction.id}');
-        
-        // Link the MPESA transaction to the regular transaction
+      if (mpesaFromDb == null) {
+        print('⚠ ERROR: Could not find MPESA transaction in database after $maxRetries retries');
+        print('Transaction code: ${mpesaTx.transactionCode}');
+        throw Exception('MPESA transaction not found in database after $maxRetries retries');
+      }
+      
+      print('✓ Found MPESA transaction in database: ${mpesaFromDb.id}');
+      print('Current linked_transaction_id: ${mpesaFromDb.linkedTransactionId}');
+      
+      // Now link using the database-fetched instance
+      print('Linking MPESA transaction ${mpesaFromDb.id} to transaction ${transaction.id}');
+      
+      try {
         await mpesaFromDb.linkToTransaction(transaction.id);
+        print('✓ linkToTransaction method executed');
+      } catch (e) {
+        print('✗ ERROR in linkToTransaction: $e');
+        // Continue to verification - we'll use fallback if needed
+      }
+      
+      // Wait for the link to be committed
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      // VERIFY the link was created
+      final verifyMpesa = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+      if (verifyMpesa?.linkedTransactionId == transaction.id) {
+        print('✓ VERIFIED: Link successfully created');
+        print('  linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
+      } else {
+        print('⚠ WARNING: Link verification failed');
+        print('  Expected linked_transaction_id: ${transaction.id}');
+        print('  Actual linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
         
-        // Wait for the link to be committed
-        await Future.delayed(const Duration(milliseconds: 100));
-        
-        // Verify the link was created
-        final verifyMpesa = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
-        if (verifyMpesa?.linkedTransactionId == transaction.id) {
-          print('✓ VERIFIED: Link successfully created');
-          print('  linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
-        } else {
-          print('⚠ WARNING: Link verification failed');
-          print('  Expected linked_transaction_id: ${transaction.id}');
-          print('  Actual linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
-          
-          // Try linking one more time
-          if (verifyMpesa != null && verifyMpesa.linkedTransactionId == null) {
-            print('Attempting to link again...');
-            await verifyMpesa.linkToTransaction(transaction.id);
-            await Future.delayed(const Duration(milliseconds: 100));
+        // FALLBACK: Direct SQL update
+        if (verifyMpesa != null && verifyMpesa.linkedTransactionId == null) {
+          print('Attempting direct SQL update as fallback...');
+          try {
+            final userId = getUserId();
+            if (userId == null) {
+              throw Exception('User ID is null');
+            }
+            
+            await db.execute('''
+              UPDATE mpesa_transactions 
+              SET linked_transaction_id = ?
+              WHERE transaction_code = ? AND user_id = ?
+            ''', [transaction.id, mpesaTx.transactionCode, userId]);
+            
+            print('✓ Direct SQL update executed');
+            
+            await Future.delayed(const Duration(milliseconds: 200));
             
             // Final verification
             final finalCheck = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
             if (finalCheck?.linkedTransactionId == transaction.id) {
-              print('✓ VERIFIED: Link created on second attempt');
+              print('✓ VERIFIED: Link created via direct SQL update');
             } else {
-              print('✗ ERROR: Link still failed after retry');
+              print('✗ ERROR: Link still failed after direct SQL update');
+              print('  Final linked_transaction_id: ${finalCheck?.linkedTransactionId}');
             }
+          } catch (e) {
+            print('✗ ERROR: Direct SQL update failed: $e');
           }
         }
-      } else {
-        print('⚠ WARNING: Could not find MPESA transaction in database after ${maxRetries} retries');
-        print('Transaction code: ${mpesaTx.transactionCode}');
-        print('This may indicate a database sync issue');
       }
       
       // Clear from any pending stores
@@ -415,6 +435,7 @@ class MpesaService {
             transactionCost: 0.0, // Not available from SharedPreferences
             isDebit: isDebit,
             rawMessage: 'Recovered from offline storage',
+            notes: 'Auto-recovered from offline storage',
           );
           
           print('✓ Created MPESA transaction: ${mpesaTx.id}');

@@ -171,29 +171,46 @@ class MpesaTransaction {
     return MpesaTransaction.fromRow(results.first);
   }
 
-  /// Link this MPESA transaction to a regular transaction
-  /// This sets the foreign key relationship
-  Future<void> linkToTransaction(String transactionId) async {
-    // Verify the transaction exists before linking
-    final transaction = await Transaction.getById(transactionId);
-    if (transaction == null) {
-      throw Exception('Cannot link to non-existent transaction: $transactionId');
-    }
-    
-    // Verify the transaction belongs to the same user
-    if (transaction.userId != userId) {
-      throw Exception('Cannot link MPESA transaction to transaction owned by different user');
-    }
-    
-    // Update the foreign key
-    await db.execute('''
-      UPDATE $mpesaTransactionsTable 
-      SET linked_transaction_id = ?
-      WHERE id = ?
-    ''', [transactionId, id]);
-    
-    print('✓ MPESA transaction $transactionCode linked to transaction $transactionId');
+  // lib/models/mpesa_transaction.dart - FIXED linkToTransaction method
+
+/// Link this MPESA transaction to a regular transaction
+/// This sets the foreign key relationship
+Future<void> linkToTransaction(String transactionId) async {
+  print('=== linkToTransaction called ===');
+  print('MPESA ID: $id');
+  print('Transaction Code: $transactionCode');
+  print('Target Transaction ID: $transactionId');
+  print('User ID: $userId');
+  
+  // Verify the transaction exists before linking
+  final transaction = await Transaction.getById(transactionId);
+  if (transaction == null) {
+    throw Exception('Cannot link to non-existent transaction: $transactionId');
   }
+  print('✓ Target transaction exists: ${transaction.title}');
+  
+  // Verify the transaction belongs to the same user
+  if (transaction.userId != userId) {
+    throw Exception('Cannot link MPESA transaction to transaction owned by different user');
+  }
+  print('✓ User ID matches');
+  
+  // CRITICAL: Update using transaction_code instead of id to avoid stale object issues
+  final rowsAffected = await db.execute('''
+    UPDATE mpesa_transactions 
+    SET linked_transaction_id = ?
+    WHERE transaction_code = ? AND user_id = ?
+  ''', [transactionId, transactionCode, userId]);
+  
+  print('Rows affected: $rowsAffected');
+  
+  if (rowsAffected == 0) {
+    print('⚠ WARNING: No rows updated - MPESA transaction may not exist');
+    throw Exception('Failed to update MPESA transaction - not found in database');
+  }
+  
+  print('✓ MPESA transaction $transactionCode linked to transaction $transactionId');
+}
 
   /// Unlink from transaction (set foreign key to NULL)
   Future<void> unlink() async {
