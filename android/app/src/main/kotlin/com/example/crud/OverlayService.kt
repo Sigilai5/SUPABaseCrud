@@ -298,6 +298,7 @@ class OverlayService : Service() {
         }
 
         // Save button
+        // Save button
         overlayView.findViewById<Button>(R.id.btnSave).setOnClickListener {
             Log.d(TAG, "=== Save button clicked ===")
 
@@ -310,6 +311,7 @@ class OverlayService : Service() {
             Log.d(TAG, "Type: $originalType")
             Log.d(TAG, "Selected Category ID: $selectedCategoryId")
             Log.d(TAG, "Location: $currentLatitude, $currentLongitude")
+            Log.d(TAG, "Transaction Code: $transactionCode")  // Add this log
 
             if (editedTitle.isEmpty()) {
                 Toast.makeText(this, "Please enter a title", Toast.LENGTH_SHORT).show()
@@ -333,7 +335,7 @@ class OverlayService : Service() {
                     "type" to originalType,
                     "categoryId" to selectedCategoryId!!,
                     "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
-                    "transactionCode" to transactionCode,
+                    "transactionCode" to transactionCode,  // ADD THIS LINE
                     "latitude" to currentLatitude,
                     "longitude" to currentLongitude
                 )
