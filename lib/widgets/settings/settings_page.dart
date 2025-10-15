@@ -11,6 +11,7 @@ import '../common/status_app_bar.dart';
 import '../mpesa/pending_mpesa_page.dart';
 import '../../models/pending_mpesa.dart';
 import '../../debug/schema_checker_page.dart';
+import '../../debug/database_records_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -798,6 +799,24 @@ class _SettingsPageState extends State<SettingsPage> {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (context) => const SchemaCheckerPage(),
+                            ),
+                          );
+                        },
+                      ),
+                      // Add this import at the top
+
+                      // Then add this ListTile in the Debug section (around line 527, after Schema Checker):
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.storage, color: Colors.teal),
+                        title: const Text('Database Records'),
+                        subtitle: const Text('View all transactions and MPESA records'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const DatabaseRecordsPage(),
                             ),
                           );
                         },
