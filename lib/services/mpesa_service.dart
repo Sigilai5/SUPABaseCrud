@@ -234,48 +234,66 @@ class MpesaService {
         print('✓ Location saved: $latitude, $longitude');
       }
       
-      // CRITICAL: Get the MPESA transaction from database to ensure we have the latest version
-      print('Fetching MPESA transaction from database for linking...');
-      final mpesaFromDb = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+      // CRITICAL FIX: Wait a moment for the transaction to be committed
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      // Get fresh MPESA transaction from database with retries
+      MpesaTransaction? mpesaFromDb;
+      int retryCount = 0;
+      const maxRetries = 3;
+      
+      while (mpesaFromDb == null && retryCount < maxRetries) {
+        print('Attempt ${retryCount + 1}: Fetching MPESA transaction from database...');
+        mpesaFromDb = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+        
+        if (mpesaFromDb == null) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            print('MPESA transaction not found, waiting before retry...');
+            await Future.delayed(Duration(milliseconds: 200 * retryCount));
+          }
+        }
+      }
       
       if (mpesaFromDb != null) {
-        // Link the MPESA transaction to the regular transaction
+        print('✓ Found MPESA transaction: ${mpesaFromDb.id}');
         print('Linking MPESA transaction ${mpesaFromDb.id} to transaction ${transaction.id}');
+        
+        // Link the MPESA transaction to the regular transaction
         await mpesaFromDb.linkToTransaction(transaction.id);
-        print('✓ MPESA transaction ${mpesaFromDb.transactionCode} linked to transaction ${transaction.id}');
+        
+        // Wait for the link to be committed
+        await Future.delayed(const Duration(milliseconds: 100));
         
         // Verify the link was created
         final verifyMpesa = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
         if (verifyMpesa?.linkedTransactionId == transaction.id) {
-          print('✓ Verified: Link successfully created');
+          print('✓ VERIFIED: Link successfully created');
+          print('  linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
         } else {
-          print('⚠ Warning: Link verification failed');
+          print('⚠ WARNING: Link verification failed');
           print('  Expected linked_transaction_id: ${transaction.id}');
           print('  Actual linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
+          
+          // Try linking one more time
+          if (verifyMpesa != null && verifyMpesa.linkedTransactionId == null) {
+            print('Attempting to link again...');
+            await verifyMpesa.linkToTransaction(transaction.id);
+            await Future.delayed(const Duration(milliseconds: 100));
+            
+            // Final verification
+            final finalCheck = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
+            if (finalCheck?.linkedTransactionId == transaction.id) {
+              print('✓ VERIFIED: Link created on second attempt');
+            } else {
+              print('✗ ERROR: Link still failed after retry');
+            }
+          }
         }
       } else {
-        print('⚠ Warning: Could not find MPESA transaction in database');
-        print('Creating new MPESA transaction entry...');
-        
-        // Create the MPESA transaction if it doesn't exist
-        final newMpesaTx = await MpesaTransaction.create(
-          transactionCode: mpesaTx.transactionCode,
-          transactionType: mpesaTx.transactionType,
-          amount: mpesaTx.amount,
-          counterpartyName: mpesaTx.counterpartyName,
-          counterpartyNumber: mpesaTx.counterpartyNumber,
-          transactionDate: mpesaTx.transactionDate,
-          newBalance: mpesaTx.newBalance,
-          transactionCost: mpesaTx.transactionCost,
-          isDebit: mpesaTx.isDebit,
-          rawMessage: mpesaTx.rawMessage,
-          notes: mpesaTx.notes,
-        );
-        
-        print('✓ Created new MPESA transaction: ${newMpesaTx.id}');
-        
-        await newMpesaTx.linkToTransaction(transaction.id);
-        print('✓ Linked new MPESA transaction to regular transaction');
+        print('⚠ WARNING: Could not find MPESA transaction in database after ${maxRetries} retries');
+        print('Transaction code: ${mpesaTx.transactionCode}');
+        print('This may indicate a database sync issue');
       }
       
       // Clear from any pending stores
