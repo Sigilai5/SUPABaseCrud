@@ -38,35 +38,23 @@ class MpesaService {
           print('Parsed data: $data');
           
           final confirmed = data['confirmed'] as bool;
-          final transactionCode = data['transactionCode'] as String?;
-          
           print('Confirmed: $confirmed');
-          print('Transaction Code: $transactionCode');
           
-          if (confirmed && transactionCode != null) {
+          if (confirmed && _pendingMpesaTransaction != null) {
             print('Creating transaction from MPESA data');
             
             // Extract edited data from overlay
-            final editedTitle = data['title'] as String;
+            final editedTitle = data['title'] as String? ?? _pendingMpesaTransaction!.getDisplayName();
             final editedNotes = data['notes'] as String?;
             final categoryId = data['categoryId'] as String?;
             final latitude = data['latitude'] as double?;
             final longitude = data['longitude'] as double?;
             
-            // CRITICAL: Fetch fresh MPESA transaction from database by code
-            print('Fetching MPESA transaction from database...');
-            final mpesaTx = await MpesaTransaction.getByCode(transactionCode);
-            
-            if (mpesaTx == null) {
-              print('ERROR: Could not find MPESA transaction with code $transactionCode');
-              return;
-            }
-            
-            print('Found MPESA transaction: ${mpesaTx.id}');
-            print('Calling _saveAsTransaction with fresh object');
+            print('Calling _saveAsTransaction with categoryId: $categoryId');
+            print('Location: $latitude, $longitude');
             
             await _saveAsTransaction(
-              mpesaTx,  // Fresh object from database
+              _pendingMpesaTransaction!,
               editedTitle: editedTitle,
               editedNotes: editedNotes,
               categoryId: categoryId,

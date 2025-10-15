@@ -299,30 +299,14 @@ class OverlayService : Service() {
 
         // Save button
         // Save button
+        // In OverlayService.kt, around line 169-200
         overlayView.findViewById<Button>(R.id.btnSave).setOnClickListener {
             Log.d(TAG, "=== Save button clicked ===")
 
             val editedTitle = etTitle.text.toString().trim()
             val editedNotes = etNotes.text.toString().trim()
 
-            Log.d(TAG, "Title: $editedTitle")
-            Log.d(TAG, "Notes: $editedNotes")
-            Log.d(TAG, "Amount: $originalAmount")
-            Log.d(TAG, "Type: $originalType")
-            Log.d(TAG, "Selected Category ID: $selectedCategoryId")
-            Log.d(TAG, "Location: $currentLatitude, $currentLongitude")
-            Log.d(TAG, "Transaction Code: $transactionCode")  // Add this log
-
-            if (editedTitle.isEmpty()) {
-                Toast.makeText(this, "Please enter a title", Toast.LENGTH_SHORT).show()
-                etTitle.requestFocus()
-                return@setOnClickListener
-            }
-
-            if (selectedCategoryId == null) {
-                Toast.makeText(this, "Please select a category", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+            // ... validation code ...
 
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
             Log.d(TAG, "Flutter engine available: ${engine != null}")
@@ -335,7 +319,7 @@ class OverlayService : Service() {
                     "type" to originalType,
                     "categoryId" to selectedCategoryId!!,
                     "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
-                    "transactionCode" to transactionCode,  // ADD THIS LINE
+                    "transactionCode" to transactionCode,  // ✓ THIS IS ALREADY THERE
                     "latitude" to currentLatitude,
                     "longitude" to currentLongitude
                 )
