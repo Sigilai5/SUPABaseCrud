@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import '../../models/transaction.dart';
 import '../../models/category.dart';
 import '../../services/location_service.dart';
-import '../common/location_capture_widget.dart';
 
 class TransactionForm extends StatefulWidget {
   final Transaction? transaction;
@@ -40,7 +39,7 @@ class _TransactionFormState extends State<TransactionForm> {
   List<Category> _categories = [];
   bool _loading = false;
   
-  // Location fields
+  // Location fields - captured automatically in background
   double? _latitude;
   double? _longitude;
 
@@ -51,15 +50,20 @@ class _TransactionFormState extends State<TransactionForm> {
     
     if (widget.transaction != null) {
       _populateForm();
-    } else if (widget.initialTitle != null || widget.initialAmount != null) {
-      // Populate with initial values for pending MPESA
-      _titleController.text = widget.initialTitle ?? '';
-      if (widget.initialAmount != null) {
-        _amountController.text = widget.initialAmount.toString();
+    } else {
+      // Populate with initial values if provided
+      if (widget.initialTitle != null || widget.initialAmount != null) {
+        _titleController.text = widget.initialTitle ?? '';
+        if (widget.initialAmount != null) {
+          _amountController.text = widget.initialAmount.toString();
+        }
+        _type = widget.initialType ?? TransactionType.expense;
+        _selectedCategoryId = widget.initialCategoryId;
+        _notesController.text = widget.initialNotes ?? '';
       }
-      _type = widget.initialType ?? TransactionType.expense;
-      _selectedCategoryId = widget.initialCategoryId;
-      _notesController.text = widget.initialNotes ?? '';
+      
+      // Auto-capture location in background for new transactions
+      _captureLocationInBackground();
     }
   }
 
@@ -73,6 +77,31 @@ class _TransactionFormState extends State<TransactionForm> {
     _notesController.text = transaction.notes ?? '';
     _latitude = transaction.latitude;
     _longitude = transaction.longitude;
+  }
+
+  Future<void> _captureLocationInBackground() async {
+    try {
+      // Check if we have location permission
+      final hasPermission = await LocationService.hasLocationPermission();
+      if (!hasPermission) {
+        print('Location permission not granted, skipping location capture');
+        return;
+      }
+
+      // Get current position silently in background
+      final position = await LocationService.getCurrentPosition();
+      
+      if (position != null && mounted) {
+        setState(() {
+          _latitude = position.latitude;
+          _longitude = position.longitude;
+        });
+        print('Location captured: $_latitude, $_longitude');
+      }
+    } catch (e) {
+      print('Error capturing location in background: $e');
+      // Silently fail - don't show error to user
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -391,20 +420,35 @@ class _TransactionFormState extends State<TransactionForm> {
                     ),
                     maxLines: 3,
                   ),
-                  const SizedBox(height: 16),
-
-                  // Location capture widget
-                  LocationCaptureWidget(
-                    initialLatitude: _latitude,
-                    initialLongitude: _longitude,
-                    onLocationChanged: (lat, lng) {
-                      setState(() {
-                        _latitude = lat;
-                        _longitude = lng;
-                      });
-                    },
-                  ),
                   const SizedBox(height: 24),
+
+                  // Location indicator (if captured)
+                  if (_latitude != null && _longitude != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_on, size: 16, color: Colors.blue.shade700),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Location captured',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_latitude != null && _longitude != null)
+                    const SizedBox(height: 24),
 
                   // Submit button
                   ElevatedButton(

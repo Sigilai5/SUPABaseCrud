@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'powersync.dart';
 import 'services/mpesa_service.dart';
+import 'services/location_service.dart';
 import 'widgets/auth/login_page.dart';
 import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
@@ -76,14 +77,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _checkPermissions() async {
+    // Check SMS permission
     final hasSms = await MpesaService.hasSmsPermission();
     if (!hasSms) {
       await MpesaService.requestSmsPermission();
     }
 
+    // Check overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
     if (!hasOverlay && mounted) {
       _showOverlayPermissionDialog();
+    }
+
+    // Check and request location permission at startup
+    final hasLocation = await LocationService.hasLocationPermission();
+    if (!hasLocation && mounted) {
+      await LocationService.showLocationPermissionDialog(context);
     }
   }
 
@@ -432,7 +441,4 @@ class AppDrawer extends StatelessWidget {
       ),
     );
   }
-
-
-
 }

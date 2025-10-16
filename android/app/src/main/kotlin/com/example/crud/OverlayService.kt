@@ -86,9 +86,9 @@ class OverlayService : Service() {
         tvSender = overlayView.findViewById(R.id.tvSender)
         spinnerCategory = overlayView.findViewById(R.id.spinnerCategory)
         tvDate = overlayView.findViewById(R.id.tvDate)
-        btnCaptureLocation = overlayView.findViewById(R.id.btnCaptureLocation)
-        tvLocationStatus = overlayView.findViewById(R.id.tvLocationStatus)
-        locationContainer = overlayView.findViewById(R.id.locationContainer)
+//        btnCaptureLocation = overlayView.findViewById(R.id.btnCaptureLocation)
+//        tvLocationStatus = overlayView.findViewById(R.id.tvLocationStatus)
+//        locationContainer = overlayView.findViewById(R.id.locationContainer)
 
         setupWindowManager()
         setupClickListeners()
@@ -153,12 +153,10 @@ class OverlayService : Service() {
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             Log.w(TAG, "Location permission not granted")
-            updateLocationUI(false, "Permission not granted")
             return
         }
 
         isCapturingLocation = true
-        updateLocationUI(true, "Getting location...")
 
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
@@ -167,7 +165,6 @@ class OverlayService : Service() {
                     currentLatitude = location.latitude
                     currentLongitude = location.longitude
                     Log.d(TAG, "Location captured: $currentLatitude, $currentLongitude")
-                    updateLocationUI(false, "Location captured")
                 } else {
                     Log.w(TAG, "Location is null, requesting fresh location")
                     requestFreshLocation()
@@ -175,12 +172,12 @@ class OverlayService : Service() {
             }.addOnFailureListener { e ->
                 isCapturingLocation = false
                 Log.e(TAG, "Failed to get location: ${e.message}")
-                updateLocationUI(false, "Failed to get location")
+
             }
         } catch (e: Exception) {
             isCapturingLocation = false
             Log.e(TAG, "Error capturing location: ${e.message}")
-            updateLocationUI(false, "Error: ${e.message}")
+
         }
     }
 
@@ -194,7 +191,7 @@ class OverlayService : Service() {
                 Manifest.permission.ACCESS_COARSE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            updateLocationUI(false, "Permission not granted")
+
             return
         }
 
@@ -211,7 +208,6 @@ class OverlayService : Service() {
                     currentLatitude = location.latitude
                     currentLongitude = location.longitude
                     Log.d(TAG, "Fresh location captured: $currentLatitude, $currentLongitude")
-                    updateLocationUI(false, "Location captured")
                 }
                 fusedLocationClient.removeLocationUpdates(this)
             }
@@ -222,22 +218,6 @@ class OverlayService : Service() {
             locationCallback,
             null
         )
-    }
-
-    private fun updateLocationUI(isLoading: Boolean, message: String) {
-        btnCaptureLocation.isEnabled = !isLoading
-        tvLocationStatus.text = message
-
-        if (currentLatitude != null && currentLongitude != null) {
-            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_green_dark))
-            btnCaptureLocation.text = "Update Location"
-        } else if (isLoading) {
-            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_blue_dark))
-            btnCaptureLocation.text = "Getting..."
-        } else {
-            tvLocationStatus.setTextColor(resources.getColor(android.R.color.holo_orange_dark))
-            btnCaptureLocation.text = "Capture Location"
-        }
     }
 
     // In OverlayService.kt - Replace the setupCategorySpinner method
@@ -348,9 +328,8 @@ class OverlayService : Service() {
 
     private fun setupClickListeners() {
         // Location capture button
-        btnCaptureLocation.setOnClickListener {
             captureLocation()
-        }
+
 
         // Save button
         // Save button
