@@ -40,6 +40,7 @@ class OverlayService : Service() {
     private var currentLatitude: Double? = null
     private var currentLongitude: Double? = null
     private var isCapturingLocation = false
+    private var locationCaptureAttempted = false
 
     // Store original transaction data
     private var originalAmount: Double = 0.0
@@ -57,9 +58,7 @@ class OverlayService : Service() {
     private lateinit var tvSender: TextView
     private lateinit var spinnerCategory: Spinner
     private lateinit var tvDate: TextView
-    private lateinit var btnCaptureLocation: Button
     private lateinit var tvLocationStatus: TextView
-    private lateinit var locationContainer: View
 
     // Categories received from Flutter
     private var categories = mutableListOf<Category>()
@@ -69,7 +68,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize location client
+        // Initialize location client FIRST
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         createNotificationChannel()
@@ -86,15 +85,13 @@ class OverlayService : Service() {
         tvSender = overlayView.findViewById(R.id.tvSender)
         spinnerCategory = overlayView.findViewById(R.id.spinnerCategory)
         tvDate = overlayView.findViewById(R.id.tvDate)
-//        btnCaptureLocation = overlayView.findViewById(R.id.btnCaptureLocation)
-//        tvLocationStatus = overlayView.findViewById(R.id.tvLocationStatus)
-//        locationContainer = overlayView.findViewById(R.id.locationContainer)
+        tvLocationStatus = overlayView.findViewById(R.id.tvLocationStatus)
 
         setupWindowManager()
         setupClickListeners()
 
-        // Auto-capture location on start
-        captureLocation()
+        // Start location capture immediately in background
+        captureLocationInBackground()
     }
 
     private fun createNotificationChannel() {
@@ -139,8 +136,15 @@ class OverlayService : Service() {
         windowManager.addView(overlayView, params)
     }
 
-    private fun captureLocation() {
-        if (isCapturingLocation) return
+    /**
+     * Capture location silently in the background
+     * This runs automatically when the overlay starts
+     */
+    private fun captureLocationInBackground() {
+        if (isCapturingLocation || locationCaptureAttempted) return
+
+        locationCaptureAttempted = true
+        updateLocationStatus("Capturing location...")
 
         // Check permission
         if (ActivityCompat.checkSelfPermission(
@@ -153,34 +157,44 @@ class OverlayService : Service() {
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             Log.w(TAG, "Location permission not granted")
+            updateLocationStatus("Location permission not granted")
             return
         }
 
         isCapturingLocation = true
 
         try {
+            // First try to get last known location (fast)
             fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
-                isCapturingLocation = false
                 if (location != null) {
+                    // Got location from cache
                     currentLatitude = location.latitude
                     currentLongitude = location.longitude
-                    Log.d(TAG, "Location captured: $currentLatitude, $currentLongitude")
+                    isCapturingLocation = false
+                    Log.d(TAG, "✓ Location captured from cache: $currentLatitude, $currentLongitude")
+                    updateLocationStatus("✓ Location captured")
                 } else {
-                    Log.w(TAG, "Location is null, requesting fresh location")
+                    // No cached location, request fresh one
+                    Log.d(TAG, "No cached location, requesting fresh location...")
                     requestFreshLocation()
                 }
             }.addOnFailureListener { e ->
                 isCapturingLocation = false
-                Log.e(TAG, "Failed to get location: ${e.message}")
-
+                Log.e(TAG, "Failed to get last location: ${e.message}")
+                updateLocationStatus("Location unavailable")
+                // Still try fresh location as fallback
+                requestFreshLocation()
             }
         } catch (e: Exception) {
             isCapturingLocation = false
-            Log.e(TAG, "Error capturing location: ${e.message}")
-
+            Log.e(TAG, "Error in location capture: ${e.message}")
+            updateLocationStatus("Location error")
         }
     }
 
+    /**
+     * Request a fresh location from GPS/Network
+     */
     private fun requestFreshLocation() {
         if (ActivityCompat.checkSelfPermission(
                 this,
@@ -191,14 +205,18 @@ class OverlayService : Service() {
                 Manifest.permission.ACCESS_COARSE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-
+            updateLocationStatus("Location permission required")
             return
         }
+
+        updateLocationStatus("Getting precise location...")
 
         val locationRequest = LocationRequest.create().apply {
             priority = LocationRequest.PRIORITY_HIGH_ACCURACY
             numUpdates = 1
             interval = 0
+            fastestInterval = 0
+            maxWaitTime = 5000 // 5 second timeout
         }
 
         val locationCallback = object : LocationCallback() {
@@ -207,20 +225,42 @@ class OverlayService : Service() {
                 locationResult.lastLocation?.let { location ->
                     currentLatitude = location.latitude
                     currentLongitude = location.longitude
-                    Log.d(TAG, "Fresh location captured: $currentLatitude, $currentLongitude")
+                    Log.d(TAG, "✓ Fresh location captured: $currentLatitude, $currentLongitude")
+                    updateLocationStatus("✓ Location captured")
+                } ?: run {
+                    Log.w(TAG, "Location result was null")
+                    updateLocationStatus("Location unavailable")
                 }
                 fusedLocationClient.removeLocationUpdates(this)
             }
         }
 
-        fusedLocationClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback,
-            null
-        )
+        try {
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                null
+            )
+        } catch (e: Exception) {
+            isCapturingLocation = false
+            Log.e(TAG, "Error requesting location updates: ${e.message}")
+            updateLocationStatus("Location error")
+        }
     }
 
-    // In OverlayService.kt - Replace the setupCategorySpinner method
+    /**
+     * Update the location status text in the UI
+     */
+    private fun updateLocationStatus(status: String) {
+        try {
+            tvLocationStatus.post {
+                tvLocationStatus.text = status
+                tvLocationStatus.visibility = View.VISIBLE
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating location status: ${e.message}")
+        }
+    }
 
     private fun setupCategorySpinner(categoriesList: List<Map<String, Any>>) {
         Log.d(TAG, "=== Setting up category spinner ===")
@@ -274,7 +314,7 @@ class OverlayService : Service() {
                 // Add default MPESA if not found in the list
                 if (!foundMpesa) {
                     Log.d(TAG, "MPESA category not in list, adding default")
-                    categories.add(0, defaultMpesaCategory) // Add at beginning
+                    categories.add(0, defaultMpesaCategory)
                 }
             }
 
@@ -294,7 +334,6 @@ class OverlayService : Service() {
                 selectedCategoryId = categories[mpesaIndex].id
                 Log.d(TAG, "✓ Selected MPESA category at index $mpesaIndex (id=${selectedCategoryId})")
             } else {
-                // Fallback to first category
                 selectedCategoryId = categories.firstOrNull()?.id
                 Log.d(TAG, "MPESA not found, selected first category: $selectedCategoryId")
             }
@@ -327,20 +366,22 @@ class OverlayService : Service() {
     }
 
     private fun setupClickListeners() {
-        // Location capture button
-            captureLocation()
-
-
         // Save button
-        // Save button
-        // In OverlayService.kt, around line 169-200
         overlayView.findViewById<Button>(R.id.btnSave).setOnClickListener {
             Log.d(TAG, "=== Save button clicked ===")
 
             val editedTitle = etTitle.text.toString().trim()
             val editedNotes = etNotes.text.toString().trim()
 
-            // ... validation code ...
+            if (editedTitle.isEmpty()) {
+                Toast.makeText(this, "Please enter a title", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            if (selectedCategoryId == null) {
+                Toast.makeText(this, "Please select a category", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
 
             val engine = FlutterEngineCache.getInstance().get("crud_engine")
             Log.d(TAG, "Flutter engine available: ${engine != null}")
@@ -353,7 +394,7 @@ class OverlayService : Service() {
                     "type" to originalType,
                     "categoryId" to selectedCategoryId!!,
                     "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
-                    "transactionCode" to transactionCode,  // ✓ THIS IS ALREADY THERE
+                    "transactionCode" to transactionCode,
                     "latitude" to currentLatitude,
                     "longitude" to currentLongitude
                 )
@@ -446,7 +487,7 @@ class OverlayService : Service() {
             }
 
             prefs.edit().putString(PENDING_TRANSACTIONS, updatedJson).apply()
-            Log.d(TAG, "Transaction with edits and location saved to SharedPreferences")
+            Log.d(TAG, "✓ Transaction saved with location: lat=$currentLatitude, lng=$currentLongitude")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error saving pending transaction with edits: ${e.message}", e)
@@ -505,7 +546,8 @@ class OverlayService : Service() {
                 tvAmount.setTextColor(android.graphics.Color.parseColor("#F44336"))
             }
 
-            Log.d(TAG, "Overlay setup complete")
+            Log.d(TAG, "✓ Overlay UI setup complete")
+            Log.d(TAG, "✓ Location capture running in background")
         }
         return START_STICKY
     }
@@ -516,6 +558,12 @@ class OverlayService : Service() {
             try {
                 windowManager.removeView(overlayView)
                 Log.d(TAG, "Overlay removed")
+
+                if (currentLatitude != null && currentLongitude != null) {
+                    Log.d(TAG, "✓ Final location: $currentLatitude, $currentLongitude")
+                } else {
+                    Log.d(TAG, "⚠ No location captured")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error removing overlay: ${e.message}")
             }
