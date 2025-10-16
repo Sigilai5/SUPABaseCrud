@@ -240,54 +240,109 @@ class OverlayService : Service() {
         }
     }
 
+    // In OverlayService.kt - Replace the setupCategorySpinner method
+
     private fun setupCategorySpinner(categoriesList: List<Map<String, Any>>) {
-        Log.d(TAG, "Setting up spinner with ${categoriesList.size} categories")
+        Log.d(TAG, "=== Setting up category spinner ===")
+        Log.d(TAG, "Received ${categoriesList.size} categories")
 
         categories.clear()
 
-        if (categoriesList.isEmpty()) {
-            Log.w(TAG, "No categories received, using default MPESA category")
-            categories.add(Category("mpesa", "MPESA", "both", "#4CAF50", "payments"))
-        } else {
-            for (catMap in categoriesList) {
-                try {
-                    val category = Category(
-                        id = catMap["id"] as? String ?: "unknown",
-                        name = catMap["name"] as? String ?: "Unknown",
-                        type = catMap["type"] as? String ?: "both",
-                        color = catMap["color"] as? String ?: "#4CAF50",
-                        icon = catMap["icon"] as? String ?: "category"
-                    )
-                    categories.add(category)
-                    Log.d(TAG, "Added category: ${category.name}")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing category: ${e.message}")
+        try {
+            // Always add a default MPESA category first as fallback
+            val defaultMpesaCategory = Category(
+                id = "mpesa_default",
+                name = "MPESA",
+                type = "both",
+                color = "#4CAF50",
+                icon = "payments"
+            )
+
+            if (categoriesList.isEmpty()) {
+                Log.w(TAG, "No categories received! Using default MPESA category only")
+                categories.add(defaultMpesaCategory)
+            } else {
+                var foundMpesa = false
+
+                // Add all received categories
+                for (catMap in categoriesList) {
+                    try {
+                        val id = catMap["id"] as? String ?: continue
+                        val name = catMap["name"] as? String ?: "Unknown"
+                        val type = catMap["type"] as? String ?: "both"
+                        val color = catMap["color"] as? String ?: "#4CAF50"
+                        val icon = catMap["icon"] as? String ?: "category"
+
+                        val category = Category(
+                            id = id,
+                            name = name,
+                            type = type,
+                            color = color,
+                            icon = icon
+                        )
+                        categories.add(category)
+                        Log.d(TAG, "Added category: $name (id=$id)")
+
+                        if (name.equals("MPESA", ignoreCase = true)) {
+                            foundMpesa = true
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing category: ${e.message}")
+                    }
+                }
+
+                // Add default MPESA if not found in the list
+                if (!foundMpesa) {
+                    Log.d(TAG, "MPESA category not in list, adding default")
+                    categories.add(0, defaultMpesaCategory) // Add at beginning
                 }
             }
-        }
 
-        val adapter = CategorySpinnerAdapter(this, categories)
-        spinnerCategory.adapter = adapter
+            Log.d(TAG, "Total categories after processing: ${categories.size}")
 
-        val mpesaIndex = categories.indexOfFirst { it.name.equals("MPESA", ignoreCase = true) }
-        if (mpesaIndex >= 0) {
-            spinnerCategory.setSelection(mpesaIndex)
-            selectedCategoryId = categories[mpesaIndex].id
-            Log.d(TAG, "Selected MPESA category at index $mpesaIndex")
-        } else {
-            selectedCategoryId = categories.firstOrNull()?.id
-            Log.d(TAG, "MPESA not found, selected first category: $selectedCategoryId")
-        }
+            // Setup spinner adapter
+            val adapter = CategorySpinnerAdapter(this, categories)
+            spinnerCategory.adapter = adapter
 
-        spinnerCategory.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selectedCategoryId = categories[position].id
-                Log.d(TAG, "User selected category: ${categories[position].name} ($selectedCategoryId)")
+            // Find and select MPESA category
+            val mpesaIndex = categories.indexOfFirst {
+                it.name.equals("MPESA", ignoreCase = true)
             }
 
-            override fun onNothingSelected(parent: AdapterView<*>?) {
-                Log.d(TAG, "No category selected")
+            if (mpesaIndex >= 0) {
+                spinnerCategory.setSelection(mpesaIndex)
+                selectedCategoryId = categories[mpesaIndex].id
+                Log.d(TAG, "✓ Selected MPESA category at index $mpesaIndex (id=${selectedCategoryId})")
+            } else {
+                // Fallback to first category
+                selectedCategoryId = categories.firstOrNull()?.id
+                Log.d(TAG, "MPESA not found, selected first category: $selectedCategoryId")
             }
+
+            // Set up selection listener
+            spinnerCategory.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    if (position < categories.size) {
+                        selectedCategoryId = categories[position].id
+                        Log.d(TAG, "User selected category: ${categories[position].name} (id=$selectedCategoryId)")
+                    }
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    Log.d(TAG, "No category selected")
+                }
+            }
+
+            Log.d(TAG, "✓ Category spinner setup complete")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "CRITICAL: Error setting up category spinner", e)
+            // Last resort fallback
+            categories.clear()
+            categories.add(Category("mpesa_fallback", "MPESA", "both", "#4CAF50", "payments"))
+            val adapter = CategorySpinnerAdapter(this, categories)
+            spinnerCategory.adapter = adapter
+            selectedCategoryId = "mpesa_fallback"
         }
     }
 

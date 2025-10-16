@@ -23,7 +23,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Cache FlutterEngine for access in OverlayService
         FlutterEngineCache.getInstance().put("crud_engine", flutterEngine)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
@@ -44,36 +43,71 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "showTransactionOverlay" -> {
-                    val title = call.argument<String>("title") ?: "Unknown"
-                    val amount = call.argument<Double>("amount") ?: 0.0
-                    val type = call.argument<String>("type") ?: "expense"
-                    val sender = call.argument<String>("sender") ?: "Unknown"
-                    val rawMessage = call.argument<String>("rawMessage") ?: ""
-                    val transactionCode = call.argument<String>("transactionCode") ?: ""
+                    try {
+                        val title = call.argument<String>("title") ?: "Unknown"
+                        val amount = call.argument<Double>("amount") ?: 0.0
+                        val type = call.argument<String>("type") ?: "expense"
+                        val sender = call.argument<String>("sender") ?: "Unknown"
+                        val rawMessage = call.argument<String>("rawMessage") ?: ""
+                        val transactionCode = call.argument<String>("transactionCode") ?: ""
 
-                    @Suppress("UNCHECKED_CAST")
-                    val categories = call.argument<List<Map<String, Any>>>("categories") ?: emptyList()
+                        // CRITICAL FIX: Better type handling for categories
+                        val categoriesArg = call.argument<Any>("categories")
+                        Log.d(TAG, "Categories argument type: ${categoriesArg?.javaClass?.name}")
+                        Log.d(TAG, "Categories argument value: $categoriesArg")
 
-                    Log.d(TAG, "showTransactionOverlay called")
-                    Log.d(TAG, "Received ${categories.size} categories from Flutter")
+                        val categoriesList = when (categoriesArg) {
+                            is List<*> -> {
+                                // Convert List<*> to List<HashMap<String, Any>>
+                                categoriesArg.mapNotNull { item ->
+                                    when (item) {
+                                        is Map<*, *> -> {
+                                            val hashMap = HashMap<String, Any>()
+                                            item.forEach { (key, value) ->
+                                                if (key is String && value != null) {
+                                                    hashMap[key] = value
+                                                }
+                                            }
+                                            hashMap
+                                        }
+                                        else -> null
+                                    }
+                                }
+                            }
+                            else -> emptyList()
+                        }
 
-                    val intent = Intent(this, OverlayService::class.java).apply {
-                        putExtra("title", title)
-                        putExtra("amount", amount)
-                        putExtra("type", type)
-                        putExtra("sender", sender)
-                        putExtra("rawMessage", rawMessage)
-                        putExtra("transactionCode", transactionCode)
-                        putExtra("categories", ArrayList(categories.map { HashMap(it) }))
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        Log.d(TAG, "Converted ${categoriesList.size} categories")
+                        categoriesList.forEach { cat ->
+                            Log.d(TAG, "Category: ${cat["name"]} (${cat["id"]})")
+                        }
+
+                        if (categoriesList.isEmpty()) {
+                            Log.w(TAG, "WARNING: No categories received! Creating default MPESA category")
+                        }
+
+                        val intent = Intent(this, OverlayService::class.java).apply {
+                            putExtra("title", title)
+                            putExtra("amount", amount)
+                            putExtra("type", type)
+                            putExtra("sender", sender)
+                            putExtra("rawMessage", rawMessage)
+                            putExtra("transactionCode", transactionCode)
+                            putExtra("categories", ArrayList(categoriesList))
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(null)
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error showing transaction overlay", e)
+                        result.error("OVERLAY_ERROR", e.message, null)
                     }
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
-                    }
-                    result.success(null)
                 }
                 "getPendingTransactions" -> {
                     val transactions = getPendingTransactions()

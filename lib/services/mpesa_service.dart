@@ -129,42 +129,66 @@ class MpesaService {
     await _showTransactionOverlay(mpesaTx);
   }
 
-  static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
-    try {
-      // Get categories for the overlay
-      final categories = await Category.watchUserCategories().first;
-      
-      // Filter categories based on transaction type (debit = expense, credit = income)
-      final transactionType = mpesaTx.isDebit ? 'expense' : 'income';
-      final filteredCategories = categories.where((cat) => 
-        cat.type == transactionType || cat.type == 'both'
-      ).toList();
-      
-      print('Sending ${filteredCategories.length} categories to overlay');
-      
-      final categoriesData = filteredCategories.map((cat) => {
+  // In mpesa_service.dart - Update the _showTransactionOverlay method
+
+static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
+  try {
+    print('=== Showing Transaction Overlay ===');
+    
+    // Get categories for the overlay
+    final categories = await Category.watchUserCategories().first;
+    print('Total categories available: ${categories.length}');
+    
+    // Filter categories based on transaction type (debit = expense, credit = income)
+    final transactionType = mpesaTx.isDebit ? 'expense' : 'income';
+    final filteredCategories = categories.where((cat) => 
+      cat.type == transactionType || cat.type == 'both'
+    ).toList();
+    
+    print('Filtered categories for $transactionType: ${filteredCategories.length}');
+    
+    // Convert to simple maps - CRITICAL: Ensure all values are primitives
+    final categoriesData = filteredCategories.map((cat) {
+      final data = {
         'id': cat.id,
         'name': cat.name,
         'type': cat.type,
         'color': cat.color,
         'icon': cat.icon,
-      }).toList();
-      
-      await _channel.invokeMethod('showTransactionOverlay', {
-        'title': mpesaTx.getDisplayName(),
-        'amount': mpesaTx.amount,
-        'type': mpesaTx.isDebit ? 'expense' : 'income',
-        'sender': 'MPESA',
-        'transactionCode': mpesaTx.transactionCode,
-        'rawMessage': mpesaTx.rawMessage,
-        'categories': categoriesData,
-      });
-
-      print('✓ Overlay shown for transaction: ${mpesaTx.transactionCode}');
-    } catch (e) {
-      print('Error showing overlay: $e');
+      };
+      print('Category data: ${cat.name} -> $data');
+      return data;
+    }).toList();
+    
+    print('Sending ${categoriesData.length} categories to Android');
+    
+    // Validate that we have at least one category
+    if (categoriesData.isEmpty) {
+      print('WARNING: No categories to send! This should not happen.');
     }
+    
+    final overlayData = {
+      'title': mpesaTx.getDisplayName(),
+      'amount': mpesaTx.amount,
+      'type': mpesaTx.isDebit ? 'expense' : 'income',
+      'sender': 'MPESA',
+      'transactionCode': mpesaTx.transactionCode,
+      'rawMessage': mpesaTx.rawMessage,
+      'categories': categoriesData,
+    };
+    
+    print('Overlay data prepared: ${overlayData.keys}');
+    print('Categories data type: ${categoriesData.runtimeType}');
+    print('First category type: ${categoriesData.isNotEmpty ? categoriesData[0].runtimeType : "none"}');
+    
+    await _channel.invokeMethod('showTransactionOverlay', overlayData);
+
+    print('✓ Overlay method invoked successfully');
+  } catch (e, stackTrace) {
+    print('✗ Error showing overlay: $e');
+    print('Stack trace: $stackTrace');
   }
+}
 
   static Future<void> _saveAsTransaction(
     MpesaTransaction mpesaTx, {
