@@ -237,10 +237,10 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
         }
       }
 
-      // Combine auto-notes with user notes
-      final combinedNotes = editedNotes != null && editedNotes.isNotEmpty
-          ? '${mpesaTx.notes}\n\nUser Notes:\n$editedNotes'
-          : mpesaTx.notes;
+      // Use ONLY user's notes - nothing auto-generated
+      final userNotes = (editedNotes != null && editedNotes.trim().isNotEmpty)
+          ? editedNotes.trim()
+          : null;
 
       // Create the regular transaction
       final transaction = await Transaction.create(
@@ -249,7 +249,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
         type: mpesaTx.isDebit ? TransactionType.expense : TransactionType.income,
         categoryId: category.id,
         date: mpesaTx.transactionDate,
-        notes: combinedNotes,
+        notes: userNotes,
         latitude: latitude,
         longitude: longitude,
         mpesaCode: mpesaTx.transactionCode,
@@ -388,11 +388,14 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
     return status.isGranted;
   }
 
-  static Future<void> processPendingTransactions() async {
+  // lib/services/mpesa_service.dart
+// CRITICAL FIX: Line 397 - Don't override user notes with "Auto-recovered"
+
+// Find this section around line 360-420:
+static Future<void> processPendingTransactions() async {
     try {
       print('=== Processing Pending Transactions ===');
       
-      // Get pending transactions from SharedPreferences
       final List<dynamic>? pendingList = await _channel.invokeMethod('getPendingTransactions');
       
       if (pendingList == null || pendingList.isEmpty) {
@@ -413,7 +416,6 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
           
           final transactionCode = data['transactionCode'] as String;
           
-          // Check if already exists in mpesa_transactions
           final exists = await MpesaTransaction.exists(transactionCode);
           if (exists) {
             print('Transaction $transactionCode already exists, skipping');
@@ -421,7 +423,6 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
             continue;
           }
           
-          // Get category
           String? categoryId = data['categoryId'] as String?;
           if (categoryId != null && categoryId.isEmpty) {
             categoryId = null;
@@ -437,7 +438,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
               );
             } catch (e) {
               mpesaCategory = await Category.create(
-                name: 'Other',
+                name: 'MPESA',
                 type: 'both',
                 color: '#4CAF50',
                 icon: 'payments',
@@ -446,26 +447,35 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
             categoryId = mpesaCategory.id;
           }
           
-          // Create MPESA transaction entry
           final type = data['type'] as String;
           final isDebit = type == 'expense';
+          
+          // ========================================
+          // 🔧 FIX: Preserve user notes from SharedPreferences
+          // ========================================
+          final userNotes = data['notes'] as String?;
+          final mpesaAutoNotes = 'Auto-recovered from offline storage\nTransaction Code: $transactionCode';
+          
+          final finalNotes = (userNotes != null && userNotes.isNotEmpty && !userNotes.contains('Auto-detected'))
+              ? '$mpesaAutoNotes\n\nUser Notes:\n$userNotes'
+              : mpesaAutoNotes;
+          // ========================================
           
           final mpesaTx = await MpesaTransaction.create(
             transactionCode: transactionCode,
             transactionType: isDebit ? MpesaTransactionType.send : MpesaTransactionType.received,
             amount: (data['amount'] as num).toDouble(),
-            counterpartyName: 'Unknown', // We don't have this from SharedPreferences
+            counterpartyName: 'Unknown',
             transactionDate: DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int),
-            newBalance: 0.0, // Not available from SharedPreferences
-            transactionCost: 0.0, // Not available from SharedPreferences
+            newBalance: 0.0,
+            transactionCost: 0.0,
             isDebit: isDebit,
             rawMessage: 'Recovered from offline storage',
-            notes: 'Auto-recovered from offline storage',
+            notes: finalNotes,  // 🔧 Use the combined notes here
           );
           
           print('✓ Created MPESA transaction: ${mpesaTx.id}');
           
-          // Now create regular transaction and link it
           String? notes = data['notes'] as String?;
           if (notes != null && notes.isEmpty) {
             notes = null;
@@ -477,7 +487,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
           await _saveAsTransaction(
             mpesaTx,
             editedTitle: data['title'] as String,
-            editedNotes: notes,
+            editedNotes: notes,  // 🔧 Pass the user's original notes
             categoryId: categoryId,
             latitude: latitude,
             longitude: longitude,

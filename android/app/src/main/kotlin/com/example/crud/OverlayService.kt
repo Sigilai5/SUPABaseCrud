@@ -536,7 +536,8 @@ class OverlayService : Service() {
             val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
             tvDate.text = dateFormat.format(Date())
 
-            etNotes.setText("Auto-detected from MPESA SMS\nCode: $transactionCode")
+            etNotes.setText("")
+            etNotes.hint = "Add your comments here (optional)"
 
             if (type == "income") {
                 tvType.setBackgroundColor(android.graphics.Color.parseColor("#E8F5E9"))
