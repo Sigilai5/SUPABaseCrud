@@ -832,15 +832,7 @@ class TransactionItemWidget extends StatelessWidget {
                 ],
               ),
               
-              // Show location if available
-              if (transaction.hasLocation()) ...[
-                const SizedBox(height: 8),
-                LocationChip(
-                  latitude: transaction.latitude!,
-                  longitude: transaction.longitude!,
-                ),
-              ],
-              
+                        
               // Show notes if available
               if (transaction.notes != null && transaction.notes!.isNotEmpty) ...[
                 const SizedBox(height: 8),

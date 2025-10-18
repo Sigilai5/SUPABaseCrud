@@ -20,12 +20,14 @@ Schema schema = Schema([
     Column.real('longitude'),         // Location longitude
     Column.text('created_at'),        // Creation timestamp
     Column.text('updated_at'),        // Last update timestamp
+    Column.text('mpesa_code'),       // M-PESA transaction code (if applicable)
   ], indexes: [
     Index('user_transactions', [IndexedColumn('user_id')]),
     Index('transaction_date', [IndexedColumn('date')]),
     Index('transaction_type', [IndexedColumn('type')]),
     Index('transaction_category', [IndexedColumn('category_id')]),
     Index('transaction_budget', [IndexedColumn('budget_id')]),
+    Index('mpesa_code_index', [IndexedColumn('mpesa_code')]),
   ]),
   
   // Categories table for organizing transactions

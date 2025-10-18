@@ -228,7 +228,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
         } catch (e) {
           print('MPESA category not found, creating new one');
           category = await Category.create(
-            name: 'MPESA',
+            name: 'Other',
             type: 'both',
             color: '#4CAF50',
             icon: 'payments',
@@ -252,6 +252,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
         notes: combinedNotes,
         latitude: latitude,
         longitude: longitude,
+        mpesaCode: mpesaTx.transactionCode,
       );
 
       print('✓ Regular transaction created with ID: ${transaction.id}');
@@ -436,7 +437,7 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
               );
             } catch (e) {
               mpesaCategory = await Category.create(
-                name: 'MPESA',
+                name: 'Other',
                 type: 'both',
                 color: '#4CAF50',
                 icon: 'payments',

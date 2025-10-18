@@ -68,16 +68,24 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize location client FIRST
+        // Initialize location client immediately
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
+        // Start logging early
+        Log.d(TAG, "=== OverlayService Created ===")
+        Log.d(TAG, "Attempting early location capture...")
+
+        // Try capturing location even before UI setup
+        captureLocationInBackground()
+
+        // Now set up notification and overlay
         createNotificationChannel()
         startForeground(1, createNotification())
 
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         overlayView = inflater.inflate(R.layout.transaction_overlay, null)
 
-        // Initialize UI elements
+        // Initialize UI elements AFTER starting location capture
         etTitle = overlayView.findViewById(R.id.etTitle)
         etNotes = overlayView.findViewById(R.id.etNotes)
         tvAmount = overlayView.findViewById(R.id.tvAmount)
@@ -90,9 +98,10 @@ class OverlayService : Service() {
         setupWindowManager()
         setupClickListeners()
 
-        // Start location capture immediately in background
-        captureLocationInBackground()
+        // Log that setup finished
+        Log.d(TAG, "✓ OverlayService initialized successfully")
     }
+
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -141,22 +150,18 @@ class OverlayService : Service() {
      * This runs automatically when the overlay starts
      */
     private fun captureLocationInBackground() {
-        if (isCapturingLocation || locationCaptureAttempted) return
+        if (isCapturingLocation || locationCaptureAttempted) {
+            Log.d(TAG, "Skipping duplicate location capture request")
+            return
+        }
 
         locationCaptureAttempted = true
+        Log.d(TAG, "Starting background location capture...")
         updateLocationStatus("Capturing location...")
 
-        // Check permission
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.w(TAG, "Location permission not granted")
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "⚠ Location permission not granted yet")
             updateLocationStatus("Location permission not granted")
             return
         }
@@ -164,33 +169,30 @@ class OverlayService : Service() {
         isCapturingLocation = true
 
         try {
-            // First try to get last known location (fast)
             fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
                 if (location != null) {
-                    // Got location from cache
                     currentLatitude = location.latitude
                     currentLongitude = location.longitude
                     isCapturingLocation = false
-                    Log.d(TAG, "✓ Location captured from cache: $currentLatitude, $currentLongitude")
+                    Log.i(TAG, "✓ EARLY location from cache: lat=$currentLatitude, lng=$currentLongitude")
                     updateLocationStatus("✓ Location captured")
                 } else {
-                    // No cached location, request fresh one
-                    Log.d(TAG, "No cached location, requesting fresh location...")
+                    Log.d(TAG, "No cached location found — requesting fresh one...")
                     requestFreshLocation()
                 }
             }.addOnFailureListener { e ->
                 isCapturingLocation = false
-                Log.e(TAG, "Failed to get last location: ${e.message}")
+                Log.e(TAG, "Failed to get cached location: ${e.message}")
                 updateLocationStatus("Location unavailable")
-                // Still try fresh location as fallback
                 requestFreshLocation()
             }
         } catch (e: Exception) {
             isCapturingLocation = false
-            Log.e(TAG, "Error in location capture: ${e.message}")
+            Log.e(TAG, "Error during location capture: ${e.message}")
             updateLocationStatus("Location error")
         }
     }
+
 
     /**
      * Request a fresh location from GPS/Network
@@ -396,7 +398,7 @@ class OverlayService : Service() {
                     "notes" to if (editedNotes.isNotEmpty()) editedNotes else null,
                     "transactionCode" to transactionCode,
                     "latitude" to currentLatitude,
-                    "longitude" to currentLongitude
+                    "longitude" to currentLongitude,
                 )
 
                 Log.d(TAG, "Sending transaction data to Flutter: $transactionData")

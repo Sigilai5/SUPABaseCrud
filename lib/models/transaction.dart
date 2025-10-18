@@ -21,6 +21,7 @@ class Transaction {
   final double? longitude;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? mpesaCode; // New field for MPESA code
 
   Transaction({
     required this.id,
@@ -36,6 +37,7 @@ class Transaction {
     this.longitude,
     required this.createdAt,
     required this.updatedAt,
+    this.mpesaCode,
   });
 
   factory Transaction.fromRow(sqlite.Row row) {
@@ -53,6 +55,7 @@ class Transaction {
       longitude: row['longitude'] != null ? (row['longitude'] as num).toDouble() : null,
       createdAt: DateTime.parse(row['created_at']),
       updatedAt: DateTime.parse(row['updated_at']),
+      mpesaCode: row.containsKey('mpesa_code') ? row['mpesa_code'] : null,
     );
   }
 
@@ -71,6 +74,7 @@ class Transaction {
       'longitude': longitude,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'mpesa_code': mpesaCode,
     };
   }
 
@@ -170,6 +174,7 @@ class Transaction {
     String? notes,
     double? latitude,
     double? longitude,
+    String? mpesaCode,
   }) async {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
@@ -184,8 +189,8 @@ class Transaction {
     final now = DateTime.now().toIso8601String();
     final results = await db.execute('''
       INSERT INTO $transactionsTable(
-        id, user_id, title, amount, type, category_id, budget_id, date, notes, latitude, longitude, created_at, updated_at
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, user_id, title, amount, type, category_id, budget_id, date, notes, latitude, longitude, created_at, updated_at, mpesa_code
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)
       RETURNING *
     ''', [
       uuid.v4(),
@@ -201,6 +206,7 @@ class Transaction {
       longitude,
       now,
       now,
+      mpesaCode,
     ]);
     
     return Transaction.fromRow(results.first);
@@ -354,12 +360,13 @@ class Transaction {
       notes: newNotes ?? notes,
       latitude: latitude,
       longitude: longitude,
+      mpesaCode: mpesaCode,
     );
   }
 
   @override
   String toString() {
-    return 'Transaction(id: $id, title: $title, amount: $amount, type: ${type.name}, date: $date, location: ${getLocationString() ?? "none"})';
+    return 'Transaction(id: $id, title: $title, amount: $amount, type: ${type.name}, date: $date, location: ${getLocationString() ?? "none"}, mpesaCode: ${mpesaCode ?? "none"})';
   }
 
   @override
