@@ -18,6 +18,7 @@ class MpesaService {
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
+  // Update the _handleMethodCall method to include this new case:
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     print('=== Received method call: ${call.method} ===');
     
@@ -31,6 +32,12 @@ class MpesaService {
         );
         break;
         
+      case 'openTransactionForm':
+        print('Opening transaction form from overlay');
+        final data = Map<String, dynamic>.from(call.arguments);
+        await _openTransactionFormFromOverlay(data);
+        break;
+        
       case 'onNotificationAction':
         print('Handling notification action');
         final data = Map<String, dynamic>.from(call.arguments);
@@ -38,42 +45,8 @@ class MpesaService {
         break;
         
       case 'onTransactionConfirmed':
-        print('Handling transaction confirmation');
-        print('Arguments type: ${call.arguments.runtimeType}');
-        print('Arguments: ${call.arguments}');
-        
-        if (call.arguments is Map) {
-          final data = Map<String, dynamic>.from(call.arguments);
-          print('Parsed data: $data');
-          
-          final confirmed = data['confirmed'] as bool;
-          print('Confirmed: $confirmed');
-          
-          if (confirmed && _pendingMpesaTransaction != null) {
-            print('Creating transaction from MPESA data');
-            
-            // Extract edited data from overlay
-            final editedTitle = data['title'] as String? ?? _pendingMpesaTransaction!.getDisplayName();
-            final editedNotes = data['notes'] as String?;
-            final categoryId = data['categoryId'] as String?;
-            final latitude = data['latitude'] as double?;
-            final longitude = data['longitude'] as double?;
-            
-            print('Calling _saveAsTransaction with categoryId: $categoryId');
-            print('Location: $latitude, $longitude');
-            
-            await _saveAsTransaction(
-              _pendingMpesaTransaction!,
-              editedTitle: editedTitle,
-              editedNotes: editedNotes,
-              categoryId: categoryId,
-              latitude: latitude,
-              longitude: longitude,
-            );
-            print('Transaction saved successfully');
-          }
-        }
-        _pendingMpesaTransaction = null;
+        // This is no longer needed with the simplified overlay
+        print('Legacy transaction confirmation - ignored');
         break;
       
       case 'onTransactionDismissed':
@@ -227,64 +200,31 @@ class MpesaService {
     await _showTransactionOverlay(mpesaTx);
   }
 
-static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
-  try {
-    print('=== Showing Transaction Overlay ===');
-    
-    // Get categories for the overlay
-    final categories = await Category.watchUserCategories().first;
-    print('Total categories available: ${categories.length}');
-    
-    // Filter categories based on transaction type (debit = expense, credit = income)
-    final transactionType = mpesaTx.isDebit ? 'expense' : 'income';
-    final filteredCategories = categories.where((cat) => 
-      cat.type == transactionType || cat.type == 'both'
-    ).toList();
-    
-    print('Filtered categories for $transactionType: ${filteredCategories.length}');
-    
-    // Convert to simple maps - CRITICAL: Ensure all values are primitives
-    final categoriesData = filteredCategories.map((cat) {
-      final data = {
-        'id': cat.id,
-        'name': cat.name,
-        'type': cat.type,
-        'color': cat.color,
-        'icon': cat.icon,
+// Update the _showTransactionOverlay method to use simplified overlay
+  static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
+    try {
+      print('=== Showing Transaction Overlay ===');
+      
+      // No need to send categories anymore for simplified overlay
+      final overlayData = {
+        'title': mpesaTx.getDisplayName(),
+        'amount': mpesaTx.amount,
+        'type': mpesaTx.isDebit ? 'expense' : 'income',
+        'sender': 'MPESA',
+        'transactionCode': mpesaTx.transactionCode,
+        'rawMessage': mpesaTx.rawMessage,
       };
-      print('Category data: ${cat.name} -> $data');
-      return data;
-    }).toList();
-    
-    print('Sending ${categoriesData.length} categories to Android');
-    
-    // Validate that we have at least one category
-    if (categoriesData.isEmpty) {
-      print('WARNING: No categories to send! This should not happen.');
-    }
-    
-    final overlayData = {
-      'title': mpesaTx.getDisplayName(),
-      'amount': mpesaTx.amount,
-      'type': mpesaTx.isDebit ? 'expense' : 'income',
-      'sender': 'MPESA',
-      'transactionCode': mpesaTx.transactionCode,
-      'rawMessage': mpesaTx.rawMessage,
-      'categories': categoriesData,
-    };
-    
-    print('Overlay data prepared: ${overlayData.keys}');
-    print('Categories data type: ${categoriesData.runtimeType}');
-    print('First category type: ${categoriesData.isNotEmpty ? categoriesData[0].runtimeType : "none"}');
-    
-    await _channel.invokeMethod('showTransactionOverlay', overlayData);
+      
+      print('Overlay data prepared: ${overlayData.keys}');
+      
+      await _channel.invokeMethod('showTransactionOverlay', overlayData);
 
-    print('✓ Overlay method invoked successfully');
-  } catch (e, stackTrace) {
-    print('✗ Error showing overlay: $e');
-    print('Stack trace: $stackTrace');
+      print('✓ Overlay method invoked successfully');
+    } catch (e, stackTrace) {
+      print('✗ Error showing overlay: $e');
+      print('Stack trace: $stackTrace');
+    }
   }
-}
 
   static Future<void> _saveAsTransaction(
     MpesaTransaction mpesaTx, {
@@ -635,4 +575,73 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
       print('Error requesting battery optimization exemption: $e');
     }
   }
+
+  // lib/services/mpesa_service.dart - Updated excerpt
+// Add this method to the existing MpesaService class
+
+  static Future<void> _openTransactionFormFromOverlay(Map<String, dynamic> data) async {
+    print('=== Opening transaction form from overlay ===');
+    
+    // Get the navigator context
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      print('⚠ No context available, cannot navigate');
+      return;
+    }
+    
+    try {
+      final title = data['title'] as String? ?? 'Unknown';
+      final amount = data['amount'] as double? ?? 0.0;
+      final type = data['type'] as String? ?? 'expense';
+      final transactionCode = data['transactionCode'] as String? ?? '';
+      final rawMessage = data['rawMessage'] as String? ?? '';
+      
+      print('Transaction details from overlay:');
+      print('  Title: $title');
+      print('  Amount: $amount');
+      print('  Type: $type');
+      print('  Code: $transactionCode');
+      
+      // Navigate to transaction form with pre-filled data
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => TransactionForm(
+            initialTitle: title,
+            initialAmount: amount,
+            initialType: type == 'income' ? TransactionType.income : TransactionType.expense,
+            initialNotes: 'Transaction Code: $transactionCode',
+          ),
+        ),
+      );
+      
+      print('✓ Navigated to transaction form');
+      
+      // Remove from pending transactions after adding
+      if (transactionCode.isNotEmpty) {
+        try {
+          await _channel.invokeMethod('removePendingTransaction', {
+            'transactionCode': transactionCode,
+          });
+          print('✓ Removed from pending transactions');
+        } catch (e) {
+          print('Error removing from pending: $e');
+        }
+      }
+      
+    } catch (e, stackTrace) {
+      print('✗ Error opening transaction form: $e');
+      print('Stack trace: $stackTrace');
+      
+      // Show error to user
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error opening transaction form: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+
+  
 }

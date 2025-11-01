@@ -20,6 +20,54 @@ class MainActivity : FlutterActivity() {
     private val PREFS_NAME = "MpesaPrefs"
     private val PENDING_TRANSACTIONS = "pending_transactions"
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleTransactionIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Check if we have a transaction to process from the overlay
+        intent?.let { handleTransactionIntent(it) }
+    }
+
+    private fun handleTransactionIntent(intent: Intent) {
+        if (intent.action == "com.example.crud.ADD_TRANSACTION") {
+            Log.d(TAG, "=== Processing transaction from overlay ===")
+
+            val title = intent.getStringExtra("title")
+            val amount = intent.getDoubleExtra("amount", 0.0)
+            val type = intent.getStringExtra("type")
+            val transactionCode = intent.getStringExtra("transactionCode")
+            val sender = intent.getStringExtra("sender")
+            val rawMessage = intent.getStringExtra("rawMessage")
+
+            if (title != null && amount > 0) {
+                Log.d(TAG, "Transaction data: $title - $amount")
+
+                // Send to Flutter to open transaction form
+                val engine = FlutterEngineCache.getInstance().get("crud_engine")
+                if (engine != null) {
+                    val transactionData = mapOf(
+                        "action" to "open_form",
+                        "title" to title,
+                        "amount" to amount,
+                        "type" to type,
+                        "transactionCode" to transactionCode,
+                        "sender" to sender,
+                        "rawMessage" to rawMessage
+                    )
+
+                    MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+                        .invokeMethod("openTransactionForm", transactionData)
+
+                    // Clear the intent action to prevent re-processing
+                    intent.action = null
+                }
+            }
+        }
+    }
+
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -51,41 +99,7 @@ class MainActivity : FlutterActivity() {
                         val rawMessage = call.argument<String>("rawMessage") ?: ""
                         val transactionCode = call.argument<String>("transactionCode") ?: ""
 
-                        // CRITICAL FIX: Better type handling for categories
-                        val categoriesArg = call.argument<Any>("categories")
-                        Log.d(TAG, "Categories argument type: ${categoriesArg?.javaClass?.name}")
-                        Log.d(TAG, "Categories argument value: $categoriesArg")
-
-                        val categoriesList = when (categoriesArg) {
-                            is List<*> -> {
-                                // Convert List<*> to List<HashMap<String, Any>>
-                                categoriesArg.mapNotNull { item ->
-                                    when (item) {
-                                        is Map<*, *> -> {
-                                            val hashMap = HashMap<String, Any>()
-                                            item.forEach { (key, value) ->
-                                                if (key is String && value != null) {
-                                                    hashMap[key] = value
-                                                }
-                                            }
-                                            hashMap
-                                        }
-                                        else -> null
-                                    }
-                                }
-                            }
-                            else -> emptyList()
-                        }
-
-                        Log.d(TAG, "Converted ${categoriesList.size} categories")
-                        categoriesList.forEach { cat ->
-                            Log.d(TAG, "Category: ${cat["name"]} (${cat["id"]})")
-                        }
-
-                        if (categoriesList.isEmpty()) {
-                            Log.w(TAG, "WARNING: No categories received! Creating default MPESA category")
-                        }
-
+                        // No need to pass categories anymore for simplified overlay
                         val intent = Intent(this, OverlayService::class.java).apply {
                             putExtra("title", title)
                             putExtra("amount", amount)
@@ -93,7 +107,6 @@ class MainActivity : FlutterActivity() {
                             putExtra("sender", sender)
                             putExtra("rawMessage", rawMessage)
                             putExtra("transactionCode", transactionCode)
-                            putExtra("categories", ArrayList(categoriesList))
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
 

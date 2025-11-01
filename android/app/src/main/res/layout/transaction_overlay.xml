@@ -1,319 +1,137 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView
+<androidx.cardview.widget.CardView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="#80000000"
-    android:fillViewport="true">
+    android:layout_margin="16dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="8dp"
+    app:cardBackgroundColor="@android:color/white">
 
-    <androidx.cardview.widget.CardView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="8dp">
+        android:orientation="vertical">
 
+        <!-- Header with close button -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#4CAF50"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_centerVertical="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@android:drawable/ic_dialog_info"
+                    android:tint="@android:color/white"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="MPESA Transaction Detected"
+                    android:textColor="@android:color/white"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:layout_marginStart="8dp"/>
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/closeButton"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:background="?android:selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:tint="@android:color/white"
+                android:contentDescription="Close"/>
+        </RelativeLayout>
+
+        <!-- Content -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="20dp"
-            android:background="@android:color/white">
+            android:padding="16dp">
 
-            <!-- Header -->
+            <!-- Transaction Type Badge -->
             <TextView
-                android:layout_width="match_parent"
+                android:id="@+id/tvType"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="MPESA Transaction Detected"
-                android:textSize="20sp"
+                android:text="EXPENSE"
+                android:textSize="10sp"
                 android:textStyle="bold"
-                android:textColor="@android:color/black"
+                android:textColor="@android:color/white"
+                android:background="#F44336"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
                 android:layout_marginBottom="8dp"/>
 
+            <!-- Transaction Title -->
             <TextView
-                android:id="@+id/tvSender"
+                android:id="@+id/tvTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="From: MPESA"
-                android:textSize="14sp"
-                android:textColor="@android:color/darker_gray"
-                android:layout_marginBottom="20dp"/>
-
-            <!-- Transaction Type Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="8dp"
-                app:cardElevation="2dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Type"
-                        android:textStyle="bold"
-                        android:textColor="@android:color/black"
-                        android:textSize="14sp"
-                        android:layout_marginBottom="8dp"/>
-
-                    <TextView
-                        android:id="@+id/tvType"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="INCOME"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:background="#E8F5E9"
-                        android:textColor="#4CAF50"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:paddingTop="6dp"
-                        android:paddingBottom="6dp"
-                        android:layout_gravity="start"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Title Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Title"
+                android:text="Transaction"
+                android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
+                android:layout_marginBottom="4dp"
+                android:maxLines="2"
+                android:ellipsize="end"/>
 
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <EditText
-                    android:id="@+id/etTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@android:color/transparent"
-                    android:padding="12dp"
-                    android:hint="Transaction title"
-                    android:textSize="16sp"
-                    android:textColor="@android:color/black"
-                    android:inputType="text"
-                    android:maxLines="1"/>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Amount Field -->
+            <!-- Amount -->
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Amount"
-                android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
-
-            <androidx.cardview.widget.CardView
+                android:id="@+id/tvAmount"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="12dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="KES "
-                        android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="#4CAF50"/>
-
-                    <TextView
-                        android:id="@+id/tvAmount"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="0.00"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="#4CAF50"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Category Spinner -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Category"
+                android:text="KES 0.00"
+                android:textSize="24sp"
                 android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <Spinner
-                    android:id="@+id/spinnerCategory"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:padding="12dp"
-                    android:background="@android:color/transparent"/>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Date Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Date"
-                android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <TextView
-                    android:id="@+id/tvDate"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Today"
-                    android:textSize="16sp"
-                    android:textColor="@android:color/black"
-                    android:padding="12dp"/>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Location Status (add this before the Notes field) -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Location"
-                android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <TextView
-                    android:id="@+id/tvLocationStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Capturing location..."
-                    android:textSize="13sp"
-                    android:textColor="@android:color/darker_gray"
-                    android:padding="12dp"
-                    android:drawableLeft="@android:drawable/ic_menu_mylocation"
-                    android:drawablePadding="8dp"/>
-            </androidx.cardview.widget.CardView>
-
-
-            <!-- Notes Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Notes (optional)"
-                android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:layout_marginBottom="4dp"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="24dp"
-                app:cardCornerRadius="4dp"
-                app:cardElevation="1dp"
-                app:cardBackgroundColor="#F5F5F5">
-
-                <EditText
-                    android:id="@+id/etNotes"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@android:color/transparent"
-                    android:padding="12dp"
-                    android:hint="Add notes here..."
-                    android:textSize="16sp"
-                    android:textColor="@android:color/black"
-                    android:textColorHint="@android:color/darker_gray"
-                    android:inputType="textMultiLine"
-                    android:minLines="3"
-                    android:maxLines="5"
-                    android:gravity="top|start"
-                    android:scrollbars="vertical"/>
-            </androidx.cardview.widget.CardView>
+                android:textColor="#F44336"
+                android:layout_marginBottom="16dp"/>
 
             <!-- Action Buttons -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="end"
-                android:layout_marginTop="8dp">
+                android:gravity="end">
 
                 <Button
                     android:id="@+id/btnDismiss"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="40dp"
                     android:text="Dismiss"
-                    android:textColor="@android:color/darker_gray"
                     android:textSize="14sp"
                     android:textAllCaps="false"
                     style="?android:attr/borderlessButtonStyle"
-                    android:layout_marginEnd="8dp"
-                    android:paddingStart="20dp"
-                    android:paddingEnd="20dp"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"/>
+                    android:textColor="@android:color/darker_gray"
+                    android:layout_marginEnd="8dp"/>
 
                 <Button
-                    android:id="@+id/btnSave"
+                    android:id="@+id/btnAdd"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Save Transaction"
+                    android:layout_height="40dp"
+                    android:text="Add Transaction"
                     android:textSize="14sp"
                     android:textAllCaps="false"
                     android:backgroundTint="#4CAF50"
                     android:textColor="@android:color/white"
-                    android:paddingStart="24dp"
-                    android:paddingEnd="24dp"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"/>
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"/>
             </LinearLayout>
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
-</ScrollView>
+    </LinearLayout>
+</androidx.cardview.widget.CardView>
