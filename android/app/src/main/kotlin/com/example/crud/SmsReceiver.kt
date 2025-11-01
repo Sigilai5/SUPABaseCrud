@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Telephony
 import android.util.Log
-import android.widget.Toast
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
@@ -53,8 +52,8 @@ class SmsReceiver : BroadcastReceiver() {
                     MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
                         .invokeMethod("onMpesaSmsReceived", data)
                 } else {
-                    // App is not running - save for later or show overlay directly
-                    Log.d(TAG, "Flutter engine not available - handling locally")
+                    // App is not running - handle locally with notification
+                    Log.d(TAG, "Flutter engine not available - showing notification")
                     handleMpesaDirectly(context, sender, fullMessage)
                 }
             }
@@ -68,27 +67,42 @@ class SmsReceiver : BroadcastReceiver() {
         val parsedData = parseMpesaMessage(message)
 
         if (parsedData != null) {
+            Log.d(TAG, "Parsed MPESA data: ${parsedData["title"]}, Amount: ${parsedData["amount"]}")
+
             // Save to SharedPreferences for when app opens
             savePendingTransaction(context, parsedData)
 
-            // Show overlay directly
-            val intent = Intent(context, OverlayService::class.java).apply {
-                // Extract and cast the values properly
-                putExtra("title", parsedData["title"] as? String ?: "Unknown")
-                putExtra("amount", parsedData["amount"] as? Double ?: 0.0)
-                putExtra("type", parsedData["type"] as? String ?: "expense")
-                putExtra("transactionCode", parsedData["transactionCode"] as? String ?: "UNKNOWN")
+            // Show notification with Add and Dismiss buttons
+            NotificationHelper.showTransactionNotification(
+                context = context,
+                transactionCode = parsedData["transactionCode"] as String,
+                title = parsedData["title"] as String,
+                amount = parsedData["amount"] as Double,
+                type = parsedData["type"] as String,
+                sender = sender,
+                rawMessage = message
+            )
+
+            Log.d(TAG, "✓ Notification shown for transaction: ${parsedData["transactionCode"]}")
+
+            // OPTIONAL: Also show overlay if permission is granted
+            // Uncomment the lines below if you want both notification AND overlay
+            /*
+            val overlayIntent = Intent(context, OverlayService::class.java).apply {
+                putExtra("title", parsedData["title"] as String)
+                putExtra("amount", parsedData["amount"] as Double)
+                putExtra("type", parsedData["type"] as String)
+                putExtra("transactionCode", parsedData["transactionCode"] as String)
                 putExtra("sender", sender)
                 putExtra("rawMessage", message)
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
+                context.startForegroundService(overlayIntent)
             } else {
-                context.startService(intent)
+                context.startService(overlayIntent)
             }
-
-            Log.d(TAG, "Overlay service started directly with parsed data")
+            */
         } else {
             Log.e(TAG, "Failed to parse MPESA message")
         }
@@ -123,7 +137,7 @@ class SmsReceiver : BroadcastReceiver() {
                 }
                 cleanMessage.contains("sent to", ignoreCase = true) -> {
                     type = "expense"
-                    val recipientMatch = Regex("to\\s+([A-Z\\s]+)\\s+\\d").find(cleanMessage) ?:
+                    val recipientMatch = Regex("to\\s+([A-Za-z\\s]+)\\s+\\d").find(cleanMessage) ?:
                     Regex("to\\s+(\\d+)").find(cleanMessage)
                     val recipientName = recipientMatch?.groupValues?.get(1)?.trim()
                     title = if (recipientName != null) "Sent to $recipientName" else "Money Sent"
@@ -185,13 +199,8 @@ class SmsReceiver : BroadcastReceiver() {
 
             Log.d(TAG, "Transaction saved to SharedPreferences")
 
-
-
         } catch (e: Exception) {
             Log.e(TAG, "Error saving pending transaction: ${e.message}")
         }
     }
-
-
-
 }

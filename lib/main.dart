@@ -1,4 +1,4 @@
-// lib/main.dart - Updated with Theme Support
+// lib/main.dart - Updated with Notification Support
 import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
@@ -15,6 +15,9 @@ import 'widgets/settings/settings_page.dart';
 import 'widgets/mpesa/pending_mpesa_page.dart';
 import 'models/mpesa_transaction.dart';
 import 'widgets/sms/sms_messages_page.dart';
+
+// Global navigator key for notification navigation
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   Logger.root.level = Level.INFO;
@@ -48,6 +51,7 @@ class ExpenseTrackerApp extends StatelessWidget {
     return Consumer<ThemeService>(
       builder: (context, themeService, child) {
         return MaterialApp(
+          navigatorKey: navigatorKey, // ADDED: Global navigator key for notifications
           title: 'Expense Tracker',
           theme: AppThemes.lightTheme,
           darkTheme: AppThemes.darkTheme,
@@ -89,20 +93,61 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _checkPermissions() async {
+    // Check SMS permission
     final hasSms = await MpesaService.hasSmsPermission();
     if (!hasSms) {
       await MpesaService.requestSmsPermission();
     }
 
+    // Check Notification permission (Android 13+)
+    final hasNotification = await MpesaService.hasNotificationPermission();
+    if (!hasNotification && mounted) {
+      _showNotificationPermissionDialog();
+    }
+
+    // Check Overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
     if (!hasOverlay && mounted) {
       _showOverlayPermissionDialog();
     }
 
+    // Check Location permission
     final hasLocation = await LocationService.hasLocationPermission();
     if (!hasLocation && mounted) {
       await LocationService.showLocationPermissionDialog(context);
     }
+  }
+
+  void _showNotificationPermissionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.notifications_active, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Enable Notifications'),
+          ],
+        ),
+        content: const Text(
+          'Allow notifications to receive alerts when MPESA transactions are detected.\n\n'
+          'You\'ll get instant notifications with "Add" and "Dismiss" buttons to quickly record transactions.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await MpesaService.requestNotificationPermission();
+            },
+            child: const Text('Enable'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showOverlayPermissionDialog() {
@@ -400,7 +445,7 @@ class AppDrawer extends StatelessWidget {
               ),
               SizedBox(height: 8),
               Text(
-                '1. Enable SMS and Overlay permissions in Settings\n'
+                '1. Enable SMS and Notification permissions in Settings\n'
                 '2. Create categories for your transactions\n'
                 '3. Add transactions manually or let them auto-detect from MPESA SMS\n'
                 '4. Check Pending MPESA for unrecorded transactions\n'
@@ -412,15 +457,14 @@ class AppDrawer extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               SizedBox(height: 8),
-              Text(
-                '• Automatic MPESA SMS detection\n'
+              Text('• Automatic MPESA SMS detection\n'
+                '• Instant notifications with Add/Dismiss buttons\n'
+                '• Location tagging for transactions\n'
                 '• Light & Dark mode themes\n'
                 '• Real-time sync across devices\n'
                 '• Detailed spending reports\n'
                 '• Category management\n'
-                '• Location tagging\n'
-                '• Offline support',
-              ),
+                '• Offline support'),
               SizedBox(height: 16),
               Text(
                 'Need more help?',

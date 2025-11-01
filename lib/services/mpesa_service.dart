@@ -1,11 +1,14 @@
 // lib/services/mpesa_service.dart
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../main.dart'; // Import to access navigatorKey
 import 'mpesa_parser.dart';
 import '../models/transaction.dart';
 import '../models/category.dart';
 import '../models/mpesa_transaction.dart';
 import '../powersync.dart';
+import '../widgets/transactions/transaction_form.dart';
+import 'package:flutter/material.dart';
 
 class MpesaService {
   static const MethodChannel _channel = MethodChannel('com.example.crud/mpesa');
@@ -26,6 +29,12 @@ class MpesaService {
           data['sender'] as String,
           data['message'] as String,
         );
+        break;
+        
+      case 'onNotificationAction':
+        print('Handling notification action');
+        final data = Map<String, dynamic>.from(call.arguments);
+        await _handleNotificationAction(data);
         break;
         
       case 'onTransactionConfirmed':
@@ -74,6 +83,95 @@ class MpesaService {
         
       default:
         print('Unknown method: ${call.method}');
+    }
+  }
+
+  static Future<void> _handleNotificationAction(Map<String, dynamic> data) async {
+    final action = data['action'] as String;
+    
+    if (action == 'add_from_notification') {
+      print('=== Opening transaction form from notification ===');
+      
+      // Get the navigator context
+      final context = navigatorKey.currentContext;
+      if (context == null) {
+        print('⚠ No context available, cannot navigate');
+        return;
+      }
+      
+      // Parse MPESA data
+      final title = data['title'] as String? ?? 'Unknown';
+      final amount = data['amount'] as double? ?? 0.0;
+      final type = data['type'] as String? ?? 'expense';
+      final transactionCode = data['transactionCode'] as String? ?? '';
+      final rawMessage = data['rawMessage'] as String? ?? '';
+      
+      print('Transaction details from notification:');
+      print('  Title: $title');
+      print('  Amount: $amount');
+      print('  Type: $type');
+      print('  Code: $transactionCode');
+      
+      // Parse the full message to get all details
+      final mpesaData = EnhancedMpesaParser.parse(rawMessage);
+      if (mpesaData == null) {
+        print('✗ Could not parse MPESA message');
+        return;
+      }
+      
+      print('✓ Parsed MPESA data successfully');
+      
+      try {
+        // Check if transaction already exists
+        final exists = await MpesaTransaction.exists(transactionCode);
+        if (exists) {
+          print('⚠ Transaction already exists: $transactionCode');
+          // Still open the form but show a warning
+        }
+        
+        // Create MPESA transaction record
+        final mpesaTx = await MpesaTransaction.create(
+          transactionCode: mpesaData.transactionCode,
+          transactionType: mpesaData.transactionType,
+          amount: mpesaData.amount,
+          counterpartyName: mpesaData.counterpartyName,
+          counterpartyNumber: mpesaData.counterpartyNumber,
+          transactionDate: mpesaData.transactionDate,
+          newBalance: mpesaData.newBalance,
+          transactionCost: mpesaData.transactionCost,
+          isDebit: mpesaData.isDebit,
+          rawMessage: rawMessage,
+          notes: EnhancedMpesaParser.generateNotes(mpesaData),
+        );
+        
+        print('✓ MPESA transaction created from notification: ${mpesaTx.id}');
+        
+        // Navigate to transaction form with pre-filled data
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => TransactionForm(
+              initialTitle: mpesaTx.getDisplayName(),
+              initialAmount: mpesaTx.amount,
+              initialType: mpesaTx.isDebit ? TransactionType.expense : TransactionType.income,
+              initialNotes: mpesaTx.notes,
+            ),
+          ),
+        );
+        
+        print('✓ Navigated to transaction form');
+        
+      } catch (e, stackTrace) {
+        print('✗ Error handling notification action: $e');
+        print('Stack trace: $stackTrace');
+      }
+      
+    } else if (action == 'dismiss_from_notification') {
+      print('=== Transaction dismissed from notification ===');
+      final transactionCode = data['transactionCode'] as String?;
+      if (transactionCode != null) {
+        print('Dismissed transaction: $transactionCode');
+        // Optionally: You can delete from pending list if needed
+      }
     }
   }
 
@@ -128,8 +226,6 @@ class MpesaService {
 
     await _showTransactionOverlay(mpesaTx);
   }
-
-  // In mpesa_service.dart - Update the _showTransactionOverlay method
 
 static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
   try {
@@ -388,11 +484,18 @@ static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
     return status.isGranted;
   }
 
-  // lib/services/mpesa_service.dart
-// CRITICAL FIX: Line 397 - Don't override user notes with "Auto-recovered"
+  // Request notification permission (Android 13+)
+  static Future<bool> requestNotificationPermission() async {
+    final status = await Permission.notification.request();
+    return status.isGranted;
+  }
 
-// Find this section around line 360-420:
-static Future<void> processPendingTransactions() async {
+  static Future<bool> hasNotificationPermission() async {
+    final status = await Permission.notification.status;
+    return status.isGranted;
+  }
+
+  static Future<void> processPendingTransactions() async {
     try {
       print('=== Processing Pending Transactions ===');
       
@@ -450,16 +553,12 @@ static Future<void> processPendingTransactions() async {
           final type = data['type'] as String;
           final isDebit = type == 'expense';
           
-          // ========================================
-          // 🔧 FIX: Preserve user notes from SharedPreferences
-          // ========================================
           final userNotes = data['notes'] as String?;
           final mpesaAutoNotes = 'Auto-recovered from offline storage\nTransaction Code: $transactionCode';
           
           final finalNotes = (userNotes != null && userNotes.isNotEmpty && !userNotes.contains('Auto-detected'))
               ? '$mpesaAutoNotes\n\nUser Notes:\n$userNotes'
               : mpesaAutoNotes;
-          // ========================================
           
           final mpesaTx = await MpesaTransaction.create(
             transactionCode: transactionCode,
@@ -471,7 +570,7 @@ static Future<void> processPendingTransactions() async {
             transactionCost: 0.0,
             isDebit: isDebit,
             rawMessage: 'Recovered from offline storage',
-            notes: finalNotes,  // 🔧 Use the combined notes here
+            notes: finalNotes,
           );
           
           print('✓ Created MPESA transaction: ${mpesaTx.id}');
@@ -487,7 +586,7 @@ static Future<void> processPendingTransactions() async {
           await _saveAsTransaction(
             mpesaTx,
             editedTitle: data['title'] as String,
-            editedNotes: notes,  // 🔧 Pass the user's original notes
+            editedNotes: notes,
             categoryId: categoryId,
             latitude: latitude,
             longitude: longitude,
