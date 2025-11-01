@@ -190,7 +190,7 @@ class Transaction {
     final results = await db.execute('''
       INSERT INTO $transactionsTable(
         id, user_id, title, amount, type, category_id, budget_id, date, notes, latitude, longitude, created_at, updated_at, mpesa_code
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     ''', [
       uuid.v4(),
