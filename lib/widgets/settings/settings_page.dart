@@ -3,14 +3,15 @@ import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 import '../../services/mpesa_service.dart';
 import '../../services/location_service.dart';
+import '../../services/theme_service.dart';
 import '../../powersync.dart';
 import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
 import '../mpesa/pending_mpesa_page.dart';
 import '../../models/pending_mpesa.dart';
-
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -45,107 +46,197 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
- 
+  String _getThemeModeLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'Light';
+      case ThemeMode.dark:
+        return 'Dark';
+      case ThemeMode.system:
+        return 'System default';
+    }
+  }
 
-  Future<void> _handleSignOut() async {
-  final shouldSignOut = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Sign Out'),
-      content: const Text('Are you sure you want to sign out?'),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
+  void _showThemeDialog(BuildContext context) {
+    final themeService = Provider.of<ThemeService>(context, listen: false);
+    
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.palette, color: Colors.blue),
+            SizedBox(width: 12),
+            Text('Choose Theme'),
+          ],
         ),
-        ElevatedButton(
-          onPressed: () => Navigator.pop(context, true),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Light Theme Option
+            RadioListTile<ThemeMode>(
+              title: const Row(
+                children: [
+                  Icon(Icons.light_mode, size: 20),
+                  SizedBox(width: 12),
+                  Text('Light'),
+                ],
+              ),
+              subtitle: const Text('Always use light theme'),
+              value: ThemeMode.light,
+              groupValue: themeService.themeMode,
+              onChanged: (mode) {
+                if (mode != null) {
+                  themeService.setThemeMode(mode);
+                  Navigator.pop(dialogContext);
+                }
+              },
+            ),
+            
+            // Dark Theme Option
+            RadioListTile<ThemeMode>(
+              title: const Row(
+                children: [
+                  Icon(Icons.dark_mode, size: 20),
+                  SizedBox(width: 12),
+                  Text('Dark'),
+                ],
+              ),
+              subtitle: const Text('Always use dark theme'),
+              value: ThemeMode.dark,
+              groupValue: themeService.themeMode,
+              onChanged: (mode) {
+                if (mode != null) {
+                  themeService.setThemeMode(mode);
+                  Navigator.pop(dialogContext);
+                }
+              },
+            ),
+            
+            // System Default Option
+            RadioListTile<ThemeMode>(
+              title: const Row(
+                children: [
+                  Icon(Icons.brightness_auto, size: 20),
+                  SizedBox(width: 12),
+                  Text('System default'),
+                ],
+              ),
+              subtitle: const Text('Follow system theme'),
+              value: ThemeMode.system,
+              groupValue: themeService.themeMode,
+              onChanged: (mode) {
+                if (mode != null) {
+                  themeService.setThemeMode(mode);
+                  Navigator.pop(dialogContext);
+                }
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
           ),
-          child: const Text('Sign Out'),
-        ),
-      ],
-    ),
-  );
-
-  if (shouldSignOut != true || !mounted) return;
-
-  // Show loading dialog
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => const Center(
-      child: Card(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Signing out...'),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
-  try {
-    // Logout with timeout
-    await logout().timeout(
-      const Duration(seconds: 10),
-      onTimeout: () async {
-        // Force logout if taking too long
-        print('Logout timeout - forcing sign out');
-        await Supabase.instance.client.auth.signOut();
-      },
-    );
-    
-    if (!mounted) return;
-    
-    // Close loading dialog
-    Navigator.of(context).pop();
-    
-    // Navigate to login page
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const LoginPage()),
-      (route) => false,
-    );
-    
-  } catch (e) {
-    print('Sign out error: $e');
-    
-    if (!mounted) return;
-    
-    // Close loading dialog
-    Navigator.of(context).pop();
-    
-    // Show error with force logout option
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Error signing out: $e'),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'Force Logout',
-          textColor: Colors.white,
-          onPressed: () async {
-            await Supabase.instance.client.auth.signOut();
-            if (mounted) {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const LoginPage()),
-                (route) => false,
-              );
-            }
-          },
-        ),
+        ],
       ),
     );
   }
-}
+
+  Future<void> _handleSignOut() async {
+    final shouldSignOut = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSignOut != true || !mounted) return;
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Signing out...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await logout().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () async {
+          print('Logout timeout - forcing sign out');
+          await Supabase.instance.client.auth.signOut();
+        },
+      );
+      
+      if (!mounted) return;
+      
+      Navigator.of(context).pop();
+      
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
+      
+    } catch (e) {
+      print('Sign out error: $e');
+      
+      if (!mounted) return;
+      
+      Navigator.of(context).pop();
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error signing out: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Force Logout',
+            textColor: Colors.white,
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
+                  (route) => false,
+                );
+              }
+            },
+          ),
+        ),
+      );
+    }
+  }
 
   Future<void> _handleStartAfresh() async {
     final shouldProceed = await showDialog<bool>(
@@ -454,6 +545,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
+    final theme = Theme.of(context);
     
     return Scaffold(
       appBar: const StatusAppBar(title: Text('Settings')),
@@ -470,11 +562,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       children: [
                         CircleAvatar(
                           radius: 40,
-                          backgroundColor: Colors.blue.shade100,
+                          backgroundColor: theme.colorScheme.primaryContainer,
                           child: Icon(
                             Icons.person,
                             size: 48,
-                            color: Colors.blue.shade700,
+                            color: theme.colorScheme.primary,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -490,7 +582,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           'User ID: ${user?.id.substring(0, 8)}...',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[600],
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -499,11 +591,172 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
 
-              
-                // App Settings Section
-                
+                // Appearance Section
+                Text(
+                  'Appearance',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                              
+                Card(
+                  child: Consumer<ThemeService>(
+                    builder: (context, themeService, _) {
+                      return ListTile(
+                        leading: Icon(
+                          themeService.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                          color: theme.colorScheme.primary,
+                        ),
+                        title: const Text('Theme'),
+                        subtitle: Text(_getThemeModeLabel(themeService.themeMode)),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _showThemeDialog(context),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 24),
+              
+                // Permissions Section
+                Text(
+                  'Permissions',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('SMS Permission'),
+                        subtitle: const Text('Required for MPESA transaction detection'),
+                        secondary: Icon(
+                          Icons.message,
+                          color: _smsPermission ? Colors.green : Colors.grey,
+                        ),
+                        value: _smsPermission,
+                        onChanged: (value) {
+                          if (!value) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Cannot revoke from here. Use system settings.'),
+                              ),
+                            );
+                          } else {
+                            _requestSmsPermission();
+                          }
+                        },
+                      ),
+                      const Divider(height: 1),
+                      SwitchListTile(
+                        title: const Text('Overlay Permission'),
+                        subtitle: const Text('Show transaction confirmation overlay'),
+                        secondary: Icon(
+                          Icons.layers,
+                          color: _overlayPermission ? Colors.green : Colors.grey,
+                        ),
+                        value: _overlayPermission,
+                        onChanged: (value) {
+                          if (!value) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Cannot revoke from here. Use system settings.'),
+                              ),
+                            );
+                          } else {
+                            _requestOverlayPermission();
+                          }
+                        },
+                      ),
+                      const Divider(height: 1),
+                      SwitchListTile(
+                        title: const Text('Location Permission'),
+                        subtitle: const Text('Tag transactions with location'),
+                        secondary: Icon(
+                          Icons.location_on,
+                          color: _locationPermission ? Colors.green : Colors.grey,
+                        ),
+                        value: _locationPermission,
+                        onChanged: (value) {
+                          if (!value) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Cannot revoke from here. Use system settings.'),
+                              ),
+                            );
+                          } else {
+                            _requestLocationPermission();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // Data Section
+                Text(
+                  'Data',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.refresh, color: Colors.blue),
+                        title: const Text('Clear Cache'),
+                        subtitle: const Text('Force fresh sync from server'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _handleClearCache,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.sync, color: Colors.blue),
+                        title: const Text('Sync Status'),
+                        subtitle: const Text('View synchronization details'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _showSyncStatus,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // About Section
+                Text(
+                  'About',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.info_outline, color: Colors.blue),
+                        title: const Text('About App'),
+                        subtitle: const Text('Version, licenses, and more'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _showAboutDialog,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
                 // Danger Zone
                 Text(
                   'Danger Zone',
@@ -641,7 +894,7 @@ class _SettingsPageState extends State<SettingsPage> {
       applicationIcon: Icon(
         Icons.account_balance_wallet,
         size: 48,
-        color: Colors.blue.shade700,
+        color: Theme.of(context).colorScheme.primary,
       ),
       children: [
         const SizedBox(height: 16),
@@ -660,6 +913,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 8),
         const Text('• Automatic MPESA SMS detection'),
         const Text('• Location tagging for transactions'),
+        const Text('• Light & Dark themes'),
         const Text('• Real-time sync across devices'),
         const Text('• Detailed spending reports'),
         const Text('• Category management'),

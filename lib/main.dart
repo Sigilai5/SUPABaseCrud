@@ -1,9 +1,12 @@
+// lib/main.dart - Updated with Theme Support
 import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
+import 'package:provider/provider.dart';
 import 'powersync.dart';
 import 'services/mpesa_service.dart';
 import 'services/location_service.dart';
+import 'services/theme_service.dart';
 import 'widgets/auth/login_page.dart';
 import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
@@ -26,7 +29,13 @@ void main() async {
   await MpesaService.processPendingTransactions();
 
   final loggedIn = isLoggedIn();
-  runApp(ExpenseTrackerApp(loggedIn: loggedIn));
+  
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ThemeService(),
+      child: ExpenseTrackerApp(loggedIn: loggedIn),
+    ),
+  );
 }
 
 class ExpenseTrackerApp extends StatelessWidget {
@@ -36,13 +45,16 @@ class ExpenseTrackerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Expense Tracker',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
-      home: loggedIn ? const HomePage() : const LoginPage(),
+    return Consumer<ThemeService>(
+      builder: (context, themeService, child) {
+        return MaterialApp(
+          title: 'Expense Tracker',
+          theme: AppThemes.lightTheme,
+          darkTheme: AppThemes.darkTheme,
+          themeMode: themeService.themeMode,
+          home: loggedIn ? const HomePage() : const LoginPage(),
+        );
+      },
     );
   }
 }
@@ -77,19 +89,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _checkPermissions() async {
-    // Check SMS permission
     final hasSms = await MpesaService.hasSmsPermission();
     if (!hasSms) {
       await MpesaService.requestSmsPermission();
     }
 
-    // Check overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
     if (!hasOverlay && mounted) {
       _showOverlayPermissionDialog();
     }
 
-    // Check and request location permission at startup
     final hasLocation = await LocationService.hasLocationPermission();
     if (!hasLocation && mounted) {
       await LocationService.showLocationPermissionDialog(context);
@@ -163,6 +172,9 @@ class AppDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    
     return Drawer(
       child: SafeArea(
         child: ListView(
@@ -174,10 +186,15 @@ class AppDrawer extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [
-                    Colors.blue.shade700,
-                    Colors.blue.shade500,
-                  ],
+                  colors: isDark
+                      ? [
+                          Colors.blue.shade900,
+                          Colors.blue.shade700,
+                        ]
+                      : [
+                          Colors.blue.shade700,
+                          Colors.blue.shade500,
+                        ],
                 ),
               ),
               padding: const EdgeInsets.all(20),
@@ -215,7 +232,6 @@ class AppDrawer extends StatelessWidget {
               ),
             ),
             
-            // Main Navigation Items
             ListTile(
               leading: const Icon(Icons.list),
               title: const Text('Transactions'),
@@ -240,7 +256,6 @@ class AppDrawer extends StatelessWidget {
             
             const Divider(),
             
-            // SMS Messages
             ListTile(
               leading: const Icon(Icons.message, color: Colors.blue),
               title: const Text('SMS Messages'),
@@ -259,7 +274,6 @@ class AppDrawer extends StatelessWidget {
               },
             ),
             
-            // Pending MPESA Messages with Badge
             StreamBuilder<List<MpesaTransaction>>(
               stream: MpesaTransaction.watchPendingTransactions(),
               builder: (context, snapshot) {
@@ -286,10 +300,10 @@ class AppDrawer extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (context) => const ComprehensivePendingPage(),
-                            ),
-                          );
+                      MaterialPageRoute(
+                        builder: (context) => const ComprehensivePendingPage(),
+                      ),
+                    );
                   },
                 );
               },
@@ -297,7 +311,6 @@ class AppDrawer extends StatelessWidget {
             
             const Divider(),
             
-            // Settings and Help
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
@@ -321,7 +334,6 @@ class AppDrawer extends StatelessWidget {
             
             const Divider(),
             
-            // Sign Out
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: ListTile(
@@ -396,26 +408,13 @@ class AppDrawer extends StatelessWidget {
               ),
               SizedBox(height: 16),
               Text(
-                'MPESA Transaction Types',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              SizedBox(height: 8),
-              Text(
-                '• Send Money - Phone number transfers\n'
-                '• Pochi La Biashara - Business wallet\n'
-                '• Till Payments - Lipa Na MPESA\n'
-                '• Paybill - Bill payments\n'
-                '• Received - Money received from others',
-              ),
-              SizedBox(height: 16),
-              Text(
                 'Features',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               SizedBox(height: 8),
               Text(
-                '• Automatic MPESA SMS detection (5 types)\n'
-                '• Pending MPESA messages review\n'
+                '• Automatic MPESA SMS detection\n'
+                '• Light & Dark mode themes\n'
                 '• Real-time sync across devices\n'
                 '• Detailed spending reports\n'
                 '• Category management\n'
