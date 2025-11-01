@@ -221,8 +221,6 @@ class Transaction {
     String? budgetId,
     DateTime? date,
     String? notes,
-    double? latitude,
-    double? longitude,
   }) async {
     final now = DateTime.now().toIso8601String();
     await db.execute('''
@@ -234,8 +232,6 @@ class Transaction {
         budget_id = COALESCE(?, budget_id),
         date = COALESCE(?, date),
         notes = COALESCE(?, notes),
-        latitude = COALESCE(?, latitude),
-        longitude = COALESCE(?, longitude),
         updated_at = ?
       WHERE id = ?
     ''', [
@@ -246,8 +242,6 @@ class Transaction {
       budgetId,
       date?.toIso8601String(),
       notes,
-      latitude,
-      longitude,
       now,
       id,
     ]);

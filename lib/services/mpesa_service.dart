@@ -1,4 +1,4 @@
-// lib/services/mpesa_service.dart
+// lib/services/mpesa_service.dart - COMPLETE FIXED VERSION
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../main.dart'; // Import to access navigatorKey
@@ -119,7 +119,7 @@ class MpesaService {
         
         print('✓ MPESA transaction created from notification: ${mpesaTx.id}');
         
-        // Navigate to transaction form with pre-filled data
+        // ✓ FIXED: Pass mpesaCode to the form
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => TransactionForm(
@@ -127,6 +127,7 @@ class MpesaService {
               initialAmount: mpesaTx.amount,
               initialType: mpesaTx.isDebit ? TransactionType.expense : TransactionType.income,
               initialNotes: mpesaTx.notes,
+              initialMpesaCode: mpesaTx.transactionCode,  // ✓ FIXED: Added this line
             ),
           ),
         );
@@ -200,7 +201,7 @@ class MpesaService {
     await _showTransactionOverlay(mpesaTx);
   }
 
-// Update the _showTransactionOverlay method to use simplified overlay
+  // Update the _showTransactionOverlay method to use simplified overlay
   static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
     try {
       print('=== Showing Transaction Overlay ===');
@@ -288,7 +289,7 @@ class MpesaService {
         notes: userNotes,
         latitude: latitude,
         longitude: longitude,
-        mpesaCode: mpesaTx.transactionCode,
+        mpesaCode: mpesaTx.transactionCode,  // ✓ This was already correct
       );
 
       print('✓ Regular transaction created with ID: ${transaction.id}');
@@ -576,9 +577,7 @@ class MpesaService {
     }
   }
 
-  // lib/services/mpesa_service.dart - Updated excerpt
-// Add this method to the existing MpesaService class
-
+  // ✓ FIXED: Updated _openTransactionFormFromOverlay method
   static Future<void> _openTransactionFormFromOverlay(Map<String, dynamic> data) async {
     print('=== Opening transaction form from overlay ===');
     
@@ -602,7 +601,7 @@ class MpesaService {
       print('  Type: $type');
       print('  Code: $transactionCode');
       
-      // Navigate to transaction form with pre-filled data
+      // ✓ FIXED: Pass mpesaCode to the form
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => TransactionForm(
@@ -610,6 +609,7 @@ class MpesaService {
             initialAmount: amount,
             initialType: type == 'income' ? TransactionType.income : TransactionType.expense,
             initialNotes: 'Transaction Code: $transactionCode',
+            initialMpesaCode: transactionCode,  // ✓ FIXED: Added this line
           ),
         ),
       );
@@ -641,7 +641,4 @@ class MpesaService {
       );
     }
   }
-
-
-  
 }

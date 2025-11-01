@@ -1,4 +1,4 @@
-// lib/widgets/transactions/transaction_form.dart
+// lib/widgets/transactions/transaction_form.dart - FIXED VERSION
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/transaction.dart';
@@ -12,6 +12,7 @@ class TransactionForm extends StatefulWidget {
   final TransactionType? initialType;
   final String? initialCategoryId;
   final String? initialNotes;
+  final String? initialMpesaCode;  // ✓ ADDED THIS
   
   const TransactionForm({
     super.key, 
@@ -21,6 +22,7 @@ class TransactionForm extends StatefulWidget {
     this.initialType,
     this.initialCategoryId,
     this.initialNotes,
+    this.initialMpesaCode,  // ✓ ADDED THIS
   });
 
   @override
@@ -42,6 +44,9 @@ class _TransactionFormState extends State<TransactionForm> {
   // Location fields - captured automatically in background
   double? _latitude;
   double? _longitude;
+  
+  // ✓ ADDED THIS - Store MPESA code
+  String? _mpesaCode;
 
   @override
   void initState() {
@@ -60,6 +65,7 @@ class _TransactionFormState extends State<TransactionForm> {
         _type = widget.initialType ?? TransactionType.expense;
         _selectedCategoryId = widget.initialCategoryId;
         _notesController.text = widget.initialNotes ?? '';
+        _mpesaCode = widget.initialMpesaCode;  // ✓ ADDED THIS
       }
       
       // Auto-capture location in background for new transactions
@@ -77,6 +83,7 @@ class _TransactionFormState extends State<TransactionForm> {
     _notesController.text = transaction.notes ?? '';
     _latitude = transaction.latitude;
     _longitude = transaction.longitude;
+    _mpesaCode = transaction.mpesaCode;  // ✓ ADDED THIS
   }
 
   Future<void> _captureLocationInBackground() async {
@@ -170,6 +177,7 @@ class _TransactionFormState extends State<TransactionForm> {
               : _notesController.text.trim(),
           latitude: _latitude,
           longitude: _longitude,
+          mpesaCode: _mpesaCode,  // ✓ ADDED THIS - Pass mpesaCode to database
         );
 
         if (mounted) {
@@ -192,8 +200,6 @@ class _TransactionFormState extends State<TransactionForm> {
           notes: _notesController.text.trim().isEmpty 
               ? null 
               : _notesController.text.trim(),
-          latitude: _latitude,
-          longitude: _longitude,
         );
 
         if (mounted) {
@@ -300,6 +306,47 @@ class _TransactionFormState extends State<TransactionForm> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // ✓ ADDED THIS - Show MPESA badge if this is from MPESA
+                  if (_mpesaCode != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.phone_android, color: Colors.green.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'MPESA Transaction',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.green.shade900,
+                                  ),
+                                ),
+                                Text(
+                                  'Code: $_mpesaCode',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.green.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   // Type selector
                   SegmentedButton<TransactionType>(
                     segments: const [
@@ -422,12 +469,7 @@ class _TransactionFormState extends State<TransactionForm> {
                   ),
                   const SizedBox(height: 24),
 
-                  // Location indicator (if captured)
-                  if (_latitude != null && _longitude != null)
-                   
-                  if (_latitude != null && _longitude != null)
-                    const SizedBox(height: 24),
-
+                
                   // Submit button
                   ElevatedButton(
                     onPressed: _loading ? null : _submit,
