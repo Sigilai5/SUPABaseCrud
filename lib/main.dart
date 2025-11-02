@@ -1,5 +1,4 @@
-// lib/main.dart - Updated with Notification Support
-import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
+// lib/main.dart - Updated without SMS Messages and Pending MPESA pages
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
@@ -12,9 +11,6 @@ import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
-import 'widgets/mpesa/pending_mpesa_page.dart';
-import 'models/mpesa_transaction.dart';
-import 'widgets/sms/sms_messages_page.dart';
 
 // Global navigator key for notification navigation
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -51,7 +47,7 @@ class ExpenseTrackerApp extends StatelessWidget {
     return Consumer<ThemeService>(
       builder: (context, themeService, child) {
         return MaterialApp(
-          navigatorKey: navigatorKey, // ADDED: Global navigator key for notifications
+          navigatorKey: navigatorKey,
           title: 'Expense Tracker',
           theme: AppThemes.lightTheme,
           darkTheme: AppThemes.darkTheme,
@@ -99,7 +95,6 @@ class _HomePageState extends State<HomePage> {
       await MpesaService.requestSmsPermission();
     }
 
-
     // Check Overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
     if (!hasOverlay && mounted) {
@@ -112,8 +107,6 @@ class _HomePageState extends State<HomePage> {
       await LocationService.showLocationPermissionDialog(context);
     }
   }
-
-  
 
   void _showOverlayPermissionDialog() {
     showDialog(
@@ -267,61 +260,6 @@ class AppDrawer extends StatelessWidget {
             const Divider(),
             
             ListTile(
-              leading: const Icon(Icons.message, color: Colors.blue),
-              title: const Text('SMS Messages'),
-              subtitle: const Text(
-                'View all SMS messages',
-                style: TextStyle(fontSize: 12),
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => const SmsMessagesPage(),
-                  ),
-                );
-              },
-            ),
-            
-            StreamBuilder<List<MpesaTransaction>>(
-              stream: MpesaTransaction.watchPendingTransactions(),
-              builder: (context, snapshot) {
-                final count = snapshot.data?.length ?? 0;
-                
-                return ListTile(
-                  leading: Badge(
-                    label: Text('$count'),
-                    isLabelVisible: count > 0,
-                    backgroundColor: Colors.orange,
-                    child: const Icon(Icons.pending_actions, color: Colors.orange),
-                  ),
-                  title: const Text('Pending MPESA'),
-                  subtitle: Text(
-                    count == 0
-                        ? 'No pending messages'
-                        : '$count ${count == 1 ? 'message' : 'messages'} waiting',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: count > 0 ? Colors.orange.shade700 : Colors.grey,
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const ComprehensivePendingPage(),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-            
-            const Divider(),
-            
-            ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
               onTap: () {
@@ -413,8 +351,7 @@ class AppDrawer extends StatelessWidget {
                 '1. Enable SMS and Notification permissions in Settings\n'
                 '2. Create categories for your transactions\n'
                 '3. Add transactions manually or let them auto-detect from MPESA SMS\n'
-                '4. Check Pending MPESA for unrecorded transactions\n'
-                '5. View reports to track your spending',
+                '4. View reports to track your spending',
               ),
               SizedBox(height: 16),
               Text(

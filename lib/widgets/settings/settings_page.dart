@@ -1,5 +1,4 @@
-// lib/widgets/settings/settings_page.dart
-import 'package:crud/widgets/mpesa/comprehensive_pending_page.dart';
+// lib/widgets/settings/settings_page.dart - Updated without Pending MPESA references
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,8 +9,6 @@ import '../../services/theme_service.dart';
 import '../../powersync.dart';
 import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
-import '../mpesa/pending_mpesa_page.dart';
-import '../../models/pending_mpesa.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -907,24 +904,25 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 16),
         const Text(
-          'Features:',
+          'Features',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('• Automatic MPESA SMS detection'),
-        const Text('• Location tagging for transactions'),
-        const Text('• Light & Dark themes'),
-        const Text('• Real-time sync across devices'),
-        const Text('• Detailed spending reports'),
-        const Text('• Category management'),
-        const Text('• Offline support'),
+        const Text('• Automatic MPESA SMS detection\n'
+            '• Instant notifications with Add/Dismiss buttons\n'
+            '• Location tagging for transactions\n'
+            '• Light & Dark themes\n'
+            '• Real-time sync across devices\n'
+            '• Detailed spending reports\n'
+            '• Category management\n'
+            '• Offline support'),
         const SizedBox(height: 16),
         const Text(
-          'Need help?',
+          'Need more help?',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('Contact: support@expensetracker.app'),
+        const Text('Contact us at support@expensetracker.app'),
       ],
     );
   }
