@@ -1,4 +1,4 @@
-// lib/services/mpesa_service.dart - WITHOUT NOTIFICATION FUNCTIONALITY
+// lib/services/mpesa_service.dart - WITH APP CLOSE AFTER OVERLAY ADD
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../main.dart'; // Import to access navigatorKey
@@ -123,6 +123,15 @@ class MpesaService {
     }
   }
 
+  static Future<void> _closeApp() async {
+    try {
+      await _channel.invokeMethod('closeApp');
+      print('✓ App close requested');
+    } catch (e) {
+      print('Error closing app: $e');
+    }
+  }
+
   static Future<void> _saveAsTransaction(
     MpesaTransaction mpesaTx, {
     String? editedTitle,
@@ -130,6 +139,7 @@ class MpesaService {
     String? categoryId,
     double? latitude,
     double? longitude,
+    bool fromOverlay = false,  // NEW: Track if from overlay
   }) async {
     try {
       print('=== Saving MPESA transaction as regular transaction ===');
@@ -140,6 +150,7 @@ class MpesaService {
       print('Type: ${mpesaTx.isDebit ? 'expense' : 'income'}');
       print('Category ID: $categoryId');
       print('Location: $latitude, $longitude');
+      print('From Overlay: $fromOverlay');  // NEW: Log source
       
       // Get or create category if no category provided
       Category? category;
@@ -284,6 +295,13 @@ class MpesaService {
         print('Note: Could not remove from SharedPreferences: $e');
       }
       
+      // NEW: Close app if from overlay
+      if (fromOverlay) {
+        print('Transaction added from overlay - closing app...');
+        await Future.delayed(const Duration(milliseconds: 500)); // Brief delay for UI feedback
+        await _closeApp();
+      }
+      
     } catch (e, stackTrace) {
       print('✗ Error saving transaction: $e');
       print('Stack trace: $stackTrace');
@@ -416,6 +434,7 @@ class MpesaService {
             categoryId: categoryId,
             latitude: latitude,
             longitude: longitude,
+            fromOverlay: false,  // NEW: These are from storage, not overlay
           );
           
           successCount++;
@@ -510,6 +529,11 @@ class MpesaService {
           print('Error removing from pending: $e');
         }
       }
+      
+      // NEW: Close app after returning from form (transaction was added from overlay)
+      print('Returned from transaction form - closing app...');
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _closeApp();
       
     } catch (e, stackTrace) {
       print('✗ Error opening transaction form: $e');

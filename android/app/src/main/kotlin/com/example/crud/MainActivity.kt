@@ -140,6 +140,17 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "transactionCode is required", null)
                     }
                 }
+                "closeApp" -> {
+                    try {
+                        Log.d(TAG, "Closing app as requested")
+                        // Move task to back (minimize app)
+                        moveTaskToBack(true)
+                        result.success(null)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing app", e)
+                        result.error("CLOSE_ERROR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
