@@ -52,8 +52,8 @@ class SmsReceiver : BroadcastReceiver() {
                     MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
                         .invokeMethod("onMpesaSmsReceived", data)
                 } else {
-                    // App is not running - handle locally with notification
-                    Log.d(TAG, "Flutter engine not available - showing notification")
+                    // App is not running - handle locally with overlay
+                    Log.d(TAG, "Flutter engine not available - showing overlay")
                     handleMpesaDirectly(context, sender, fullMessage)
                 }
             }
@@ -72,22 +72,7 @@ class SmsReceiver : BroadcastReceiver() {
             // Save to SharedPreferences for when app opens
             savePendingTransaction(context, parsedData)
 
-            // Show notification with Add and Dismiss buttons
-            NotificationHelper.showTransactionNotification(
-                context = context,
-                transactionCode = parsedData["transactionCode"] as String,
-                title = parsedData["title"] as String,
-                amount = parsedData["amount"] as Double,
-                type = parsedData["type"] as String,
-                sender = sender,
-                rawMessage = message
-            )
-
-            Log.d(TAG, "✓ Notification shown for transaction: ${parsedData["transactionCode"]}")
-
-            // OPTIONAL: Also show overlay if permission is granted
-            // Uncomment the lines below if you want both notification AND overlay
-            /*
+            // Show overlay
             val overlayIntent = Intent(context, OverlayService::class.java).apply {
                 putExtra("title", parsedData["title"] as String)
                 putExtra("amount", parsedData["amount"] as Double)
@@ -102,7 +87,8 @@ class SmsReceiver : BroadcastReceiver() {
             } else {
                 context.startService(overlayIntent)
             }
-            */
+
+            Log.d(TAG, "✓ Overlay shown for transaction: ${parsedData["transactionCode"]}")
         } else {
             Log.e(TAG, "Failed to parse MPESA message")
         }

@@ -1,4 +1,4 @@
-// lib/services/mpesa_service.dart - COMPLETE FIXED VERSION
+// lib/services/mpesa_service.dart - WITHOUT NOTIFICATION FUNCTIONALITY
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../main.dart'; // Import to access navigatorKey
@@ -18,7 +18,6 @@ class MpesaService {
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
-  // Update the _handleMethodCall method to include this new case:
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     print('=== Received method call: ${call.method} ===');
     
@@ -37,17 +36,6 @@ class MpesaService {
         final data = Map<String, dynamic>.from(call.arguments);
         await _openTransactionFormFromOverlay(data);
         break;
-        
-      case 'onNotificationAction':
-        print('Handling notification action');
-        final data = Map<String, dynamic>.from(call.arguments);
-        await _handleNotificationAction(data);
-        break;
-        
-      case 'onTransactionConfirmed':
-        // This is no longer needed with the simplified overlay
-        print('Legacy transaction confirmation - ignored');
-        break;
       
       case 'onTransactionDismissed':
         print('Transaction dismissed by user');
@@ -56,96 +44,6 @@ class MpesaService {
         
       default:
         print('Unknown method: ${call.method}');
-    }
-  }
-
-  static Future<void> _handleNotificationAction(Map<String, dynamic> data) async {
-    final action = data['action'] as String;
-    
-    if (action == 'add_from_notification') {
-      print('=== Opening transaction form from notification ===');
-      
-      // Get the navigator context
-      final context = navigatorKey.currentContext;
-      if (context == null) {
-        print('⚠ No context available, cannot navigate');
-        return;
-      }
-      
-      // Parse MPESA data
-      final title = data['title'] as String? ?? 'Unknown';
-      final amount = data['amount'] as double? ?? 0.0;
-      final type = data['type'] as String? ?? 'expense';
-      final transactionCode = data['transactionCode'] as String? ?? '';
-      final rawMessage = data['rawMessage'] as String? ?? '';
-      
-      print('Transaction details from notification:');
-      print('  Title: $title');
-      print('  Amount: $amount');
-      print('  Type: $type');
-      print('  Code: $transactionCode');
-      
-      // Parse the full message to get all details
-      final mpesaData = EnhancedMpesaParser.parse(rawMessage);
-      if (mpesaData == null) {
-        print('✗ Could not parse MPESA message');
-        return;
-      }
-      
-      print('✓ Parsed MPESA data successfully');
-      
-      try {
-        // Check if transaction already exists
-        final exists = await MpesaTransaction.exists(transactionCode);
-        if (exists) {
-          print('⚠ Transaction already exists: $transactionCode');
-          // Still open the form but show a warning
-        }
-        
-        // Create MPESA transaction record
-        final mpesaTx = await MpesaTransaction.create(
-          transactionCode: mpesaData.transactionCode,
-          transactionType: mpesaData.transactionType,
-          amount: mpesaData.amount,
-          counterpartyName: mpesaData.counterpartyName,
-          counterpartyNumber: mpesaData.counterpartyNumber,
-          transactionDate: mpesaData.transactionDate,
-          newBalance: mpesaData.newBalance,
-          transactionCost: mpesaData.transactionCost,
-          isDebit: mpesaData.isDebit,
-          rawMessage: rawMessage,
-          notes: EnhancedMpesaParser.generateNotes(mpesaData),
-        );
-        
-        print('✓ MPESA transaction created from notification: ${mpesaTx.id}');
-        
-        // ✓ FIXED: Pass mpesaCode to the form
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => TransactionForm(
-              initialTitle: mpesaTx.getDisplayName(),
-              initialAmount: mpesaTx.amount,
-              initialType: mpesaTx.isDebit ? TransactionType.expense : TransactionType.income,
-              initialNotes: mpesaTx.notes,
-              initialMpesaCode: mpesaTx.transactionCode,  // ✓ FIXED: Added this line
-            ),
-          ),
-        );
-        
-        print('✓ Navigated to transaction form');
-        
-      } catch (e, stackTrace) {
-        print('✗ Error handling notification action: $e');
-        print('Stack trace: $stackTrace');
-      }
-      
-    } else if (action == 'dismiss_from_notification') {
-      print('=== Transaction dismissed from notification ===');
-      final transactionCode = data['transactionCode'] as String?;
-      if (transactionCode != null) {
-        print('Dismissed transaction: $transactionCode');
-        // Optionally: You can delete from pending list if needed
-      }
     }
   }
 
@@ -201,12 +99,10 @@ class MpesaService {
     await _showTransactionOverlay(mpesaTx);
   }
 
-  // Update the _showTransactionOverlay method to use simplified overlay
   static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
     try {
       print('=== Showing Transaction Overlay ===');
       
-      // No need to send categories anymore for simplified overlay
       final overlayData = {
         'title': mpesaTx.getDisplayName(),
         'amount': mpesaTx.amount,
@@ -245,7 +141,7 @@ class MpesaService {
       print('Category ID: $categoryId');
       print('Location: $latitude, $longitude');
       
-      // Get or create MPESA category if no category provided
+      // Get or create category if no category provided
       Category? category;
       
       if (categoryId != null) {
@@ -254,23 +150,23 @@ class MpesaService {
       }
       
       if (category == null) {
-        print('No category provided or found, getting/creating MPESA category...');
+        print('No category provided or found, getting/creating Other category...');
         final categories = await Category.watchUserCategories().first;
         
         try {
           category = categories.firstWhere(
-            (cat) => cat.name.toLowerCase() == 'mpesa',
+            (cat) => cat.name.toLowerCase() == 'other',
           );
-          print('Found existing MPESA category: ${category.id}');
+          print('Found existing Other category: ${category.id}');
         } catch (e) {
-          print('MPESA category not found, creating new one');
+          print('Other category not found, creating new one');
           category = await Category.create(
             name: 'Other',
             type: 'both',
             color: '#4CAF50',
             icon: 'payments',
           );
-          print('Created MPESA category: ${category.id}');
+          print('Created Other category: ${category.id}');
         }
       }
 
@@ -289,7 +185,7 @@ class MpesaService {
         notes: userNotes,
         latitude: latitude,
         longitude: longitude,
-        mpesaCode: mpesaTx.transactionCode,  // ✓ This was already correct
+        mpesaCode: mpesaTx.transactionCode,
       );
 
       print('✓ Regular transaction created with ID: ${transaction.id}');
@@ -425,17 +321,6 @@ class MpesaService {
     return status.isGranted;
   }
 
-  // Request notification permission (Android 13+)
-  static Future<bool> requestNotificationPermission() async {
-    final status = await Permission.notification.request();
-    return status.isGranted;
-  }
-
-  static Future<bool> hasNotificationPermission() async {
-    final status = await Permission.notification.status;
-    return status.isGranted;
-  }
-
   static Future<void> processPendingTransactions() async {
     try {
       print('=== Processing Pending Transactions ===');
@@ -474,21 +359,21 @@ class MpesaService {
           
           if (categoryId == null) {
             final categories = await Category.watchUserCategories().first;
-            Category? mpesaCategory;
+            Category? otherCategory;
             
             try {
-              mpesaCategory = categories.firstWhere(
-                (cat) => cat.name.toLowerCase() == 'mpesa',
+              otherCategory = categories.firstWhere(
+                (cat) => cat.name.toLowerCase() == 'other',
               );
             } catch (e) {
-              mpesaCategory = await Category.create(
-                name: 'MPESA',
+              otherCategory = await Category.create(
+                name: 'Other',
                 type: 'both',
                 color: '#4CAF50',
                 icon: 'payments',
               );
             }
-            categoryId = mpesaCategory.id;
+            categoryId = otherCategory.id;
           }
           
           final type = data['type'] as String;
@@ -577,7 +462,6 @@ class MpesaService {
     }
   }
 
-  // ✓ FIXED: Updated _openTransactionFormFromOverlay method
   static Future<void> _openTransactionFormFromOverlay(Map<String, dynamic> data) async {
     print('=== Opening transaction form from overlay ===');
     
@@ -601,7 +485,6 @@ class MpesaService {
       print('  Type: $type');
       print('  Code: $transactionCode');
       
-      // ✓ FIXED: Pass mpesaCode to the form
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => TransactionForm(
@@ -609,7 +492,7 @@ class MpesaService {
             initialAmount: amount,
             initialType: type == 'income' ? TransactionType.income : TransactionType.expense,
             initialNotes: 'Transaction Code: $transactionCode',
-            initialMpesaCode: transactionCode,  // ✓ FIXED: Added this line
+            initialMpesaCode: transactionCode,
           ),
         ),
       );

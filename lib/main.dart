@@ -99,11 +99,6 @@ class _HomePageState extends State<HomePage> {
       await MpesaService.requestSmsPermission();
     }
 
-    // Check Notification permission (Android 13+)
-    final hasNotification = await MpesaService.hasNotificationPermission();
-    if (!hasNotification && mounted) {
-      _showNotificationPermissionDialog();
-    }
 
     // Check Overlay permission
     final hasOverlay = await MpesaService.hasOverlayPermission();
@@ -118,37 +113,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _showNotificationPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.notifications_active, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('Enable Notifications'),
-          ],
-        ),
-        content: const Text(
-          'Allow notifications to receive alerts when MPESA transactions are detected.\n\n'
-          'You\'ll get instant notifications with "Add" and "Dismiss" buttons to quickly record transactions.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Later'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await MpesaService.requestNotificationPermission();
-            },
-            child: const Text('Enable'),
-          ),
-        ],
-      ),
-    );
-  }
+  
 
   void _showOverlayPermissionDialog() {
     showDialog(
