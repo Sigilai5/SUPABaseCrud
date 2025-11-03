@@ -1,4 +1,4 @@
-// lib/main.dart - Updated without SMS Messages and Pending MPESA pages
+// lib/main.dart - Updated with MPESA SMS navigation
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +11,7 @@ import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
+import 'widgets/sms/sms_messages_page.dart';  // ✓ ADDED
 
 // Global navigator key for notification navigation
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -259,6 +260,24 @@ class AppDrawer extends StatelessWidget {
             
             const Divider(),
             
+            // ✓ ADDED THIS - MPESA SMS Button
+            ListTile(
+              leading: const Icon(Icons.message, color: Colors.green),
+              title: const Text('MPESA SMS'),
+              subtitle: const Text('View all MPESA messages'),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const SmsMessagesPage(),
+                  ),
+                );
+              },
+            ),
+            
+            const Divider(),
+            
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
@@ -366,7 +385,8 @@ class AppDrawer extends StatelessWidget {
                 '• Real-time sync across devices\n'
                 '• Detailed spending reports\n'
                 '• Category management\n'
-                '• Offline support'),
+                '• Offline support\n'
+                '• View all MPESA SMS messages'),
               SizedBox(height: 16),
               Text(
                 'Need more help?',
