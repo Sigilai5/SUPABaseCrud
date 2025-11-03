@@ -1,4 +1,7 @@
 // lib/widgets/sms/sms_messages_page.dart
+// REORGANIZED VERSION - Focuses on MPESA Till, Send Money, Received, and Paybill only
+// Checks against mpesa_code column in transactions table
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
@@ -6,10 +9,78 @@ import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../common/status_app_bar.dart';
-import '../../models/mpesa_transaction.dart';
-import '../../services/mpesa_parser.dart';
-import '../../models/category.dart';
+import '../../powersync.dart';
+import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
+
+// Supported MPESA transaction types only
+enum SupportedMpesaType {
+  till,      // Lipa Na MPESA Till
+  send,      // Send Money to phone number
+  received,  // Money Received
+  paybill,   // Paybill payment
+}
+
+class ParsedMpesaMessage {
+  final String transactionCode;
+  final SupportedMpesaType type;
+  final double amount;
+  final String counterpartyName;
+  final String? counterpartyNumber;
+  final DateTime transactionDate;
+  final bool isDebit;
+  final String rawMessage;
+
+  ParsedMpesaMessage({
+    required this.transactionCode,
+    required this.type,
+    required this.amount,
+    required this.counterpartyName,
+    this.counterpartyNumber,
+    required this.transactionDate,
+    required this.isDebit,
+    required this.rawMessage,
+  });
+
+  String get displayName {
+    switch (type) {
+      case SupportedMpesaType.send:
+        return 'Sent to $counterpartyName';
+      case SupportedMpesaType.till:
+        return 'Paid to $counterpartyName';
+      case SupportedMpesaType.paybill:
+        return 'Paybill: $counterpartyName';
+      case SupportedMpesaType.received:
+        return 'Received from $counterpartyName';
+    }
+  }
+
+  String get typeLabel {
+    switch (type) {
+      case SupportedMpesaType.send:
+        return 'SEND MONEY';
+      case SupportedMpesaType.till:
+        return 'TILL';
+      case SupportedMpesaType.paybill:
+        return 'PAYBILL';
+      case SupportedMpesaType.received:
+        return 'RECEIVED';
+    }
+  }
+
+  Color get typeColor {
+    switch (type) {
+      case SupportedMpesaType.send:
+        return Colors.blue;
+      case SupportedMpesaType.till:
+        return Colors.orange;
+      case SupportedMpesaType.paybill:
+        return Colors.teal;
+      case SupportedMpesaType.received:
+        return Colors.green;
+    }
+  }
+}
 
 class SmsMessagesPage extends StatefulWidget {
   const SmsMessagesPage({super.key});
@@ -19,8 +90,8 @@ class SmsMessagesPage extends StatefulWidget {
 }
 
 class _SmsMessagesPageState extends State<SmsMessagesPage> {
-  List<SmsMessage> _messages = [];
-  Map<String, bool> _transactionExists = {}; // Track if transaction code exists
+  List<ParsedMpesaMessage> _messages = [];
+  Map<String, bool> _transactionExists = {}; // Track if mpesa_code exists in transactions table
   bool _isLoading = true;
   bool _hasPermission = false;
   String? _error;
@@ -106,6 +177,123 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
   }
 
+  /// Parse MPESA SMS and filter for supported types only
+  ParsedMpesaMessage? _parseMpesaMessage(String message) {
+    try {
+      final cleanMessage = message.replaceAll(RegExp(r'\s+'), ' ').trim();
+      
+      // Extract transaction code (always at start)
+      final codeMatch = RegExp(r'^([A-Z0-9]{10})').firstMatch(cleanMessage);
+      if (codeMatch == null) return null;
+      final transactionCode = codeMatch.group(1)!;
+
+      // Extract amount
+      final amountMatch = RegExp(r'Ksh([\d,]+\.?\d*)').firstMatch(cleanMessage);
+      if (amountMatch == null) return null;
+      final amount = double.parse(amountMatch.group(1)!.replaceAll(',', ''));
+
+      // Extract date and time
+      final dateMatch = RegExp(r'on (\d{1,2}/\d{1,2}/\d{2}) at (\d{1,2}:\d{2} [AP]M)').firstMatch(cleanMessage);
+      DateTime transactionDate = DateTime.now();
+      
+      if (dateMatch != null) {
+        try {
+          final dateStr = dateMatch.group(1)!;
+          final timeStr = dateMatch.group(2)!;
+          
+          final dateParts = dateStr.split('/');
+          final day = int.parse(dateParts[0]);
+          final month = int.parse(dateParts[1]);
+          final year = 2000 + int.parse(dateParts[2]);
+          
+          final timeParts = timeStr.split(' ');
+          final hourMinute = timeParts[0].split(':');
+          int hour = int.parse(hourMinute[0]);
+          final minute = int.parse(hourMinute[1]);
+          final isPM = timeParts[1] == 'PM';
+          
+          if (isPM && hour != 12) hour += 12;
+          else if (!isPM && hour == 12) hour = 0;
+          
+          transactionDate = DateTime(year, month, day, hour, minute);
+        } catch (e) {
+          print('Error parsing date/time: $e');
+        }
+      }
+
+      // Determine transaction type - ONLY supported types
+      SupportedMpesaType? type;
+      String counterpartyName;
+      String? counterpartyNumber;
+      bool isDebit;
+
+      if (cleanMessage.contains('You have received')) {
+        // RECEIVED - INCOME
+        type = SupportedMpesaType.received;
+        final nameMatch = RegExp(r'from ([A-Z\s]+) (\d+)').firstMatch(cleanMessage);
+        counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
+        counterpartyNumber = nameMatch?.group(2);
+        isDebit = false;
+
+      } else if (cleanMessage.contains('sent to') && !cleanMessage.contains('paid to')) {
+        // Check if it's Pochi (skip it)
+        if (cleanMessage.contains('Sign up for Lipa Na M-PESA Till')) {
+          return null; // SKIP POCHI
+        }
+        
+        // SEND MONEY
+        type = SupportedMpesaType.send;
+        final nameMatch = RegExp(r'sent to ([A-Za-z\s]+) (\d+)').firstMatch(cleanMessage);
+        if (nameMatch != null) {
+          counterpartyName = nameMatch.group(1)?.trim() ?? 'Unknown';
+          counterpartyNumber = nameMatch.group(2);
+        } else {
+          final altMatch = RegExp(r'sent to ([A-Z\s]+)').firstMatch(cleanMessage);
+          counterpartyName = altMatch?.group(1)?.trim() ?? 'Unknown';
+          counterpartyNumber = null;
+        }
+        isDebit = true;
+
+      } else if (cleanMessage.contains('paid to')) {
+        // TILL
+        type = SupportedMpesaType.till;
+        final nameMatch = RegExp(r'paid to ([A-Z\s.&]+?)\.').firstMatch(cleanMessage);
+        counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
+        counterpartyNumber = null;
+        isDebit = true;
+
+      } else if (cleanMessage.contains('for account')) {
+        // PAYBILL
+        type = SupportedMpesaType.paybill;
+        final nameMatch = RegExp(r'sent to ([A-Za-z\s]+)\.?\s+for account').firstMatch(cleanMessage);
+        counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
+        
+        final accountMatch = RegExp(r'for account ([A-Z0-9]+)').firstMatch(cleanMessage);
+        counterpartyNumber = accountMatch?.group(1);
+        isDebit = true;
+
+      } else {
+        // Unsupported type - return null
+        return null;
+      }
+
+      return ParsedMpesaMessage(
+        transactionCode: transactionCode,
+        type: type,
+        amount: amount,
+        counterpartyName: counterpartyName,
+        counterpartyNumber: counterpartyNumber,
+        transactionDate: transactionDate,
+        isDebit: isDebit,
+        rawMessage: message,
+      );
+
+    } catch (e) {
+      print('Error parsing MPESA message: $e');
+      return null;
+    }
+  }
+
   Future<void> _loadMessages() async {
     if (_userCreatedAt == null) {
       print('User creation date not available, cannot load messages');
@@ -131,35 +319,45 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       print('Total SMS messages found: ${allMessages.length}');
 
       // Filter for MPESA messages after user creation
-      final filteredMessages = allMessages.where((message) {
+      List<ParsedMpesaMessage> parsedMessages = [];
+      
+      for (var message in allMessages) {
         final sender = message.address?.toUpperCase() ?? '';
-        final body = message.body?.toUpperCase() ?? '';
+        final body = message.body ?? '';
+        final messageDate = message.date;
+        
+        // Check if MPESA message
         final isMpesa = sender.contains('MPESA') || 
                         sender.contains('M-PESA') ||
-                        body.contains('MPESA') ||
-                        body.contains('M-PESA') ||
+                        body.toUpperCase().contains('MPESA') ||
+                        body.toUpperCase().contains('M-PESA') ||
                         sender.startsWith('MPESA');
         
-        final messageDate = message.date;
+        if (!isMpesa) continue;
+        
+        // Check if after user creation
         final isAfterCreation = messageDate != null && 
                                 messageDate.isAfter(_userCreatedAt!);
         
-        return isMpesa && isAfterCreation;
-      }).toList();
+        if (!isAfterCreation) continue;
+        
+        // Parse and filter for supported types only
+        final parsed = _parseMpesaMessage(body);
+        if (parsed != null) {
+          parsedMessages.add(parsed);
+        }
+      }
 
-      filteredMessages.sort((a, b) {
-        final dateA = a.date ?? DateTime.now();
-        final dateB = b.date ?? DateTime.now();
-        return dateB.compareTo(dateA);
-      });
+      // Sort by date (newest first)
+      parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
 
-      print('Filtered MPESA messages: ${filteredMessages.length}');
+      print('Filtered MPESA messages (supported types only): ${parsedMessages.length}');
 
-      // Check which transactions already exist in database
-      await _checkTransactionExistence(filteredMessages);
+      // Check which transactions already exist in database (by mpesa_code)
+      await _checkTransactionExistence(parsedMessages);
 
       setState(() {
-        _messages = filteredMessages;
+        _messages = parsedMessages;
         _isLoading = false;
       });
     } catch (e) {
@@ -171,17 +369,33 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
   }
 
-  Future<void> _checkTransactionExistence(List<SmsMessage> messages) async {
+  /// Check if transaction codes exist in transactions table (mpesa_code column)
+  Future<void> _checkTransactionExistence(List<ParsedMpesaMessage> messages) async {
     final Map<String, bool> existenceMap = {};
+    final userId = getUserId();
+    
+    if (userId == null) {
+      print('User not logged in');
+      return;
+    }
     
     for (var message in messages) {
-      final body = message.body ?? '';
-      final parsedData = EnhancedMpesaParser.parse(body);
-      
-      if (parsedData != null) {
-        final exists = await MpesaTransaction.exists(parsedData.transactionCode);
-        existenceMap[parsedData.transactionCode] = exists;
-        print('Transaction ${parsedData.transactionCode}: ${exists ? "EXISTS" : "PENDING"}');
+      try {
+        // Query transactions table for mpesa_code match
+        final result = await db.getOptional('''
+          SELECT COUNT(*) as count 
+          FROM transactions 
+          WHERE user_id = ? AND mpesa_code = ?
+        ''', [userId, message.transactionCode]);
+        
+        final count = (result?['count'] as int?) ?? 0;
+        final exists = count > 0;
+        
+        existenceMap[message.transactionCode] = exists;
+        print('Transaction ${message.transactionCode}: ${exists ? "EXISTS" : "PENDING"}');
+      } catch (e) {
+        print('Error checking transaction ${message.transactionCode}: $e');
+        existenceMap[message.transactionCode] = false;
       }
     }
     
@@ -227,32 +441,25 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
-  List<SmsMessage> get _filteredMessages {
+  List<ParsedMpesaMessage> get _filteredMessages {
     if (_filterQuery.isEmpty) {
       return _messages;
     }
 
     return _messages.where((message) {
-      final sender = message.address?.toLowerCase() ?? '';
-      final body = message.body?.toLowerCase() ?? '';
+      final code = message.transactionCode.toLowerCase();
+      final name = message.counterpartyName.toLowerCase();
+      final type = message.typeLabel.toLowerCase();
       final query = _filterQuery.toLowerCase();
       
-      return sender.contains(query) || body.contains(query);
+      return code.contains(query) || name.contains(query) || type.contains(query);
     }).toList();
   }
 
   int get _pendingCount {
-    int count = 0;
-    for (var message in _messages) {
-      final body = message.body ?? '';
-      final parsedData = EnhancedMpesaParser.parse(body);
-      
-      if (parsedData != null) {
-        final exists = _transactionExists[parsedData.transactionCode] ?? false;
-        if (!exists) count++;
-      }
-    }
-    return count;
+    return _messages.where((msg) => 
+      !(_transactionExists[msg.transactionCode] ?? false)
+    ).length;
   }
 
   @override
@@ -265,34 +472,31 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
           if (_hasPermission && _userCreatedAt != null && !_isLoading) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: Colors.green.shade50,
+              color: Colors.blue.shade50,
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 20, color: Colors.green.shade700),
+                  Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Showing MPESA messages since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)}',
+                          'Showing: Till, Send Money, Received & Paybill',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.green.shade900,
-                            fontWeight: FontWeight.w500,
+                            color: Colors.blue.shade900,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        if (_pendingCount > 0) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '$_pendingCount pending ${_pendingCount == 1 ? 'transaction' : 'transactions'} not yet recorded',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.orange.shade700,
-                              fontWeight: FontWeight.bold,
-                            ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)} • ${_messages.length} messages',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.blue.shade700,
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -301,8 +505,36 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
           ],
 
+          // Pending count banner
+          if (_hasPermission && !_isLoading && _pendingCount > 0) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: Colors.orange.shade50,
+              child: Row(
+                children: [
+                  Icon(Icons.pending_actions, size: 20, color: Colors.orange.shade700),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$_pendingCount pending ${_pendingCount == 1 ? 'transaction' : 'transactions'} not recorded',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange.shade900,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _loadMessages,
+                    child: const Text('Refresh'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           // Search bar
-          if (_hasPermission) ...[
+          if (_hasPermission && _messages.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -318,7 +550,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  hintText: 'Search MPESA messages...',
+                  hintText: 'Search by code, name, or type...',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _filterQuery.isNotEmpty
                       ? IconButton(
@@ -338,34 +570,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                 onChanged: (value) {
                   setState(() => _filterQuery = value);
                 },
-              ),
-            ),
-          ],
-
-          // Summary bar
-          if (_hasPermission && !_isLoading) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: Colors.blue.shade50,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${_filteredMessages.length} MPESA ${_filteredMessages.length == 1 ? 'message' : 'messages'}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue.shade900,
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _loadMessages,
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Refresh'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.blue.shade700,
-                    ),
-                  ),
-                ],
               ),
             ),
           ],
@@ -492,7 +696,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(
-                  'No MPESA messages received since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)}',
+                  'No supported MPESA messages (Till, Send, Received, Paybill) since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)}',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
@@ -523,28 +727,26 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         itemCount: _filteredMessages.length,
         itemBuilder: (context, index) {
           final message = _filteredMessages[index];
-          return _buildMessageCard(message);
+          final isPending = !(_transactionExists[message.transactionCode] ?? false);
+          return _buildMessageCard(message, isPending);
         },
       ),
     );
   }
 
-  Widget _buildMessageCard(SmsMessage message) {
-    final sender = message.address ?? 'Unknown';
-    final body = message.body ?? '';
-    final date = message.date ?? DateTime.now();
-    
-    // Parse the message to get transaction code
-    final parsedData = EnhancedMpesaParser.parse(body);
-    final isPending = parsedData != null && 
-                      !(_transactionExists[parsedData.transactionCode] ?? false);
-
+  Widget _buildMessageCard(ParsedMpesaMessage message, bool isPending) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: isPending ? 3 : 1,
       color: isPending ? Colors.orange.shade50 : Colors.green.shade50,
       child: InkWell(
-        onTap: () => _showMessageDetails(message, parsedData, isPending),
+        onTap: () {
+          if (isPending) {
+            _navigateToAddTransaction(message);
+          } else {
+            _showMessageDetails(message, isPending);
+          }
+        },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -556,14 +758,12 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: isPending 
-                          ? Colors.orange.withOpacity(0.2)
-                          : Colors.green.withOpacity(0.2),
+                      color: message.typeColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
-                      isPending ? Icons.pending_actions : Icons.check_circle,
-                      color: isPending ? Colors.orange : Colors.green,
+                      _getIconForType(message.type),
+                      color: message.typeColor,
                       size: 20,
                     ),
                   ),
@@ -574,15 +774,22 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                       children: [
                         Row(
                           children: [
-                            Expanded(
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: message.typeColor,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                               child: Text(
-                                sender,
+                                message.typeLabel,
                                 style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 15,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -606,41 +813,47 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 6),
+                        Text(
+                          message.displayName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         const SizedBox(height: 4),
                         Text(
-                          DateFormat('MMM dd, yyyy • h:mm a').format(date),
+                          '${message.transactionCode} • ${DateFormat('MMM dd, h:mm a').format(message.transactionDate)}',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             color: Colors.grey[600],
                           ),
                         ),
-                        if (parsedData != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '${parsedData.transactionCode} • KES ${NumberFormat('#,##0.00').format(parsedData.amount)}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: isPending ? Colors.orange.shade900 : Colors.green.shade900,
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right, color: Colors.grey),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'KES ${NumberFormat('#,##0.00').format(message.amount)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: message.isDebit ? Colors.red.shade700 : Colors.green.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Icon(
+                        isPending ? Icons.add_circle : Icons.check_circle,
+                        size: 18,
+                        color: isPending ? Colors.orange.shade700 : Colors.green.shade700,
+                      ),
+                    ],
+                  ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[800],
-                  height: 1.4,
-                ),
               ),
             ],
           ),
@@ -649,7 +862,37 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
-  void _showMessageDetails(SmsMessage message, MpesaTransactionData? parsedData, bool isPending) {
+  IconData _getIconForType(SupportedMpesaType type) {
+    switch (type) {
+      case SupportedMpesaType.send:
+        return Icons.send;
+      case SupportedMpesaType.till:
+        return Icons.store;
+      case SupportedMpesaType.paybill:
+        return Icons.account_balance;
+      case SupportedMpesaType.received:
+        return Icons.call_received;
+    }
+  }
+
+  void _navigateToAddTransaction(ParsedMpesaMessage message) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => TransactionForm(
+          initialTitle: message.displayName,
+          initialAmount: message.amount,
+          initialType: message.isDebit ? TransactionType.expense : TransactionType.income,
+          initialNotes: 'MPESA ${message.typeLabel}\nCode: ${message.transactionCode}\nDate: ${DateFormat('MMM dd, yyyy h:mm a').format(message.transactionDate)}',
+          initialMpesaCode: message.transactionCode,
+        ),
+      ),
+    ).then((_) {
+      // Refresh messages after adding transaction
+      _loadMessages();
+    });
+  }
+
+  void _showMessageDetails(ParsedMpesaMessage message, bool isPending) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -657,15 +900,11 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.75,
+        initialChildSize: 0.7,
         minChildSize: 0.5,
-        maxChildSize: 0.95,
+        maxChildSize: 0.9,
         expand: false,
         builder: (context, scrollController) {
-          final sender = message.address ?? 'Unknown';
-          final body = message.body ?? '';
-          final date = message.date ?? DateTime.now();
-
           return SingleChildScrollView(
             controller: scrollController,
             padding: const EdgeInsets.all(24),
@@ -714,109 +953,67 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                 
                 const SizedBox(height: 24),
                 
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.call_received,
-                        color: Colors.green,
-                        size: 28,
-                      ),
+                // Type Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: message.typeColor,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    message.typeLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'MPESA Message',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            sender,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
                 
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 
-                if (parsedData != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Transaction Details',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _buildDetailRow('Code', parsedData.transactionCode),
-                        _buildDetailRow('Amount', 'KES ${NumberFormat('#,##0.00').format(parsedData.amount)}'),
-                        _buildDetailRow('Type', parsedData.transactionType.name.toUpperCase()),
-                        _buildDetailRow('Counterparty', parsedData.counterpartyName),
-                        if (parsedData.counterpartyNumber != null)
-                          _buildDetailRow('Number', parsedData.counterpartyNumber!),
-                        _buildDetailRow('New Balance', 'KES ${NumberFormat('#,##0.00').format(parsedData.newBalance)}'),
-                        if (parsedData.transactionCost > 0)
-                          _buildDetailRow('Fee', 'KES ${NumberFormat('#,##0.00').format(parsedData.transactionCost)}'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                
+                // Transaction Details
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.grey[100],
+                    color: Colors.blue.shade50,
                     borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          DateFormat('EEEE, MMMM dd, yyyy • h:mm:ss a').format(date),
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[700],
-                          ),
+                      const Text(
+                        'Transaction Details',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDetailRow('Code', message.transactionCode),
+                      _buildDetailRow('Amount', 'KES ${NumberFormat('#,##0.00').format(message.amount)}'),
+                      _buildDetailRow('Type', message.typeLabel),
+                      _buildDetailRow('Counterparty', message.counterpartyName),
+                      if (message.counterpartyNumber != null)
+                        _buildDetailRow('Number', message.counterpartyNumber!),
+                      _buildDetailRow(
+                        'Date & Time',
+                        DateFormat('EEEE, MMM dd, yyyy • h:mm a').format(message.transactionDate),
+                      ),
+                      _buildDetailRow(
+                        'Direction',
+                        message.isDebit ? 'Money Out (Expense)' : 'Money In (Income)',
                       ),
                     ],
                   ),
                 ),
                 
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 
+                // Original SMS
                 const Text(
-                  'Original Message',
+                  'Original SMS',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -832,7 +1029,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                     border: Border.all(color: Colors.grey[300]!),
                   ),
                   child: SelectableText(
-                    body,
+                    message.rawMessage,
                     style: const TextStyle(
                       fontSize: 13,
                       height: 1.6,
@@ -842,12 +1039,13 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                 
                 const SizedBox(height: 24),
                 
+                // Action Buttons
                 Row(
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () {
-                          Clipboard.setData(ClipboardData(text: body));
+                          Clipboard.setData(ClipboardData(text: message.rawMessage));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Message copied to clipboard'),
@@ -859,13 +1057,13 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                         label: const Text('Copy'),
                       ),
                     ),
-                    if (isPending && parsedData != null) ...[
+                    if (isPending) ...[
                       const SizedBox(width: 12),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () async {
+                          onPressed: () {
                             Navigator.pop(context);
-                            await _addPendingTransaction(parsedData);
+                            _navigateToAddTransaction(message);
                           },
                           icon: const Icon(Icons.add, size: 18),
                           label: const Text('Add Transaction'),
@@ -925,67 +1123,9 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
-  Future<void> _addPendingTransaction(MpesaTransactionData parsedData) async {
-    try {
-      // Show loading
-      if (!mounted) return;
-      
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Adding transaction...'),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-
-      // Create MPESA transaction
-      final mpesaTx = await MpesaTransaction.create(
-        transactionCode: parsedData.transactionCode,
-        transactionType: parsedData.transactionType,
-        amount: parsedData.amount,
-        counterpartyName: parsedData.counterpartyName,
-        counterpartyNumber: parsedData.counterpartyNumber,
-        transactionDate: parsedData
-            .transactionDate,
-        newBalance: parsedData.newBalance,
-        transactionCost: parsedData.transactionCost,
-        isDebit: parsedData.isDebit,
-        rawMessage: parsedData.rawMessage,
-        notes: 'Added from SMS import',
-      );  
-      print('MPESA transaction added: ${mpesaTx.id}');
-      // Refresh messages to update status
-      await _loadMessages();
-      if (!mounted) return;
-      Navigator.pop(context); // Dismiss loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Transaction added successfully'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      print('Error adding transaction: $e');
-      if (!mounted) return;
-      Navigator.pop(context); // Dismiss loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error adding transaction: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 }
