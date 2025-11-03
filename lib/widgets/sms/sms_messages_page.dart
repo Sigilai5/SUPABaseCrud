@@ -1,6 +1,5 @@
 // lib/widgets/sms/sms_messages_page.dart
-// REORGANIZED VERSION - Focuses on MPESA Till, Send Money, Received, and Paybill only
-// Checks against mpesa_code column in transactions table
+// FOCUSED VERSION - Shows ONLY pending (unrecorded) transactions
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,7 +12,7 @@ import '../../powersync.dart';
 import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
 
-// Supported MPESA transaction types only
+// Supported MPESA transaction types
 enum SupportedMpesaType {
   till,      // Lipa Na MPESA Till
   send,      // Send Money to phone number
@@ -90,8 +89,9 @@ class SmsMessagesPage extends StatefulWidget {
 }
 
 class _SmsMessagesPageState extends State<SmsMessagesPage> {
-  List<ParsedMpesaMessage> _messages = [];
-  Map<String, bool> _transactionExists = {}; // Track if mpesa_code exists in transactions table
+  List<ParsedMpesaMessage> _allMessages = [];
+  List<ParsedMpesaMessage> _pendingMessages = [];
+  Map<String, bool> _transactionExists = {};
   bool _isLoading = true;
   bool _hasPermission = false;
   String? _error;
@@ -177,12 +177,12 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
   }
 
-  /// Parse MPESA SMS and filter for supported types only
+  /// Parse MPESA SMS - returns null for unsupported types or parsing errors
   ParsedMpesaMessage? _parseMpesaMessage(String message) {
     try {
       final cleanMessage = message.replaceAll(RegExp(r'\s+'), ' ').trim();
       
-      // Extract transaction code (always at start)
+      // Extract transaction code
       final codeMatch = RegExp(r'^([A-Z0-9]{10})').firstMatch(cleanMessage);
       if (codeMatch == null) return null;
       final transactionCode = codeMatch.group(1)!;
@@ -236,9 +236,9 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = false;
 
       } else if (cleanMessage.contains('sent to') && !cleanMessage.contains('paid to')) {
-        // Check if it's Pochi (skip it)
+        // Skip Pochi transactions
         if (cleanMessage.contains('Sign up for Lipa Na M-PESA Till')) {
-          return null; // SKIP POCHI
+          return null;
         }
         
         // SEND MONEY
@@ -273,7 +273,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = true;
 
       } else {
-        // Unsupported type - return null
+        // Unsupported type
         return null;
       }
 
@@ -318,7 +318,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
 
       print('Total SMS messages found: ${allMessages.length}');
 
-      // Filter for MPESA messages after user creation
+      // Filter for MPESA messages after user creation and parse them
       List<ParsedMpesaMessage> parsedMessages = [];
       
       for (var message in allMessages) {
@@ -351,15 +351,24 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       // Sort by date (newest first)
       parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
 
-      print('Filtered MPESA messages (supported types only): ${parsedMessages.length}');
+      print('Filtered MPESA messages (supported types): ${parsedMessages.length}');
 
-      // Check which transactions already exist in database (by mpesa_code)
+      // Check which transactions exist in database
       await _checkTransactionExistence(parsedMessages);
 
+      // Filter to get only pending transactions
+      final pending = parsedMessages.where((msg) => 
+        !(_transactionExists[msg.transactionCode] ?? false)
+      ).toList();
+
       setState(() {
-        _messages = parsedMessages;
+        _allMessages = parsedMessages;
+        _pendingMessages = pending;
         _isLoading = false;
       });
+
+      print('Pending (unrecorded) transactions: ${pending.length}');
+
     } catch (e) {
       print('Error loading messages: $e');
       setState(() {
@@ -369,7 +378,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
   }
 
-  /// Check if transaction codes exist in transactions table (mpesa_code column)
+  /// Check if transaction codes exist in transactions table
   Future<void> _checkTransactionExistence(List<ParsedMpesaMessage> messages) async {
     final Map<String, bool> existenceMap = {};
     final userId = getUserId();
@@ -381,7 +390,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     
     for (var message in messages) {
       try {
-        // Query transactions table for mpesa_code match
         final result = await db.getOptional('''
           SELECT COUNT(*) as count 
           FROM transactions 
@@ -392,7 +400,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         final exists = count > 0;
         
         existenceMap[message.transactionCode] = exists;
-        print('Transaction ${message.transactionCode}: ${exists ? "EXISTS" : "PENDING"}');
       } catch (e) {
         print('Error checking transaction ${message.transactionCode}: $e');
         existenceMap[message.transactionCode] = false;
@@ -417,7 +424,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         ),
         content: const Text(
           'SMS permission was permanently denied. '
-          'Please enable it in your device settings to view messages.\n\n'
+          'Please enable it in your device settings to view pending transactions.\n\n'
           'Settings > Apps > Expense Tracker > Permissions > SMS',
         ),
         actions: [
@@ -441,12 +448,12 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
-  List<ParsedMpesaMessage> get _filteredMessages {
+  List<ParsedMpesaMessage> get _filteredPendingMessages {
     if (_filterQuery.isEmpty) {
-      return _messages;
+      return _pendingMessages;
     }
 
-    return _messages.where((message) {
+    return _pendingMessages.where((message) {
       final code = message.transactionCode.toLowerCase();
       final name = message.counterpartyName.toLowerCase();
       final type = message.typeLabel.toLowerCase();
@@ -456,77 +463,65 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }).toList();
   }
 
-  int get _pendingCount {
-    return _messages.where((msg) => 
-      !(_transactionExists[msg.transactionCode] ?? false)
-    ).length;
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const StatusAppBar(title: Text('MPESA Messages')),
+      appBar: const StatusAppBar(title: Text('Pending MPESA Transactions')),
       body: Column(
         children: [
-          // Info banner
-          if (_hasPermission && _userCreatedAt != null && !_isLoading) ...[
+          // Pending count banner
+          if (_hasPermission && !_isLoading && _pendingMessages.isNotEmpty) ...[
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: Colors.blue.shade50,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                border: Border(
+                  bottom: BorderSide(color: Colors.orange.shade200),
+                ),
+              ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade100,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.pending_actions, 
+                      size: 24, 
+                      color: Colors.orange.shade700,
+                    ),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Showing: Till, Send Money, Received & Paybill',
+                          '${_pendingMessages.length} Pending ${_pendingMessages.length == 1 ? 'Transaction' : 'Transactions'}',
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.blue.shade900,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade900,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)} • ${_messages.length} messages',
+                          'Tap any transaction to add it to your records',
                           style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.blue.shade700,
+                            fontSize: 12,
+                            color: Colors.orange.shade700,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
-
-          // Pending count banner
-          if (_hasPermission && !_isLoading && _pendingCount > 0) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              color: Colors.orange.shade50,
-              child: Row(
-                children: [
-                  Icon(Icons.pending_actions, size: 20, color: Colors.orange.shade700),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '$_pendingCount pending ${_pendingCount == 1 ? 'transaction' : 'transactions'} not recorded',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.orange.shade900,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  TextButton(
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    color: Colors.orange.shade700,
                     onPressed: _loadMessages,
-                    child: const Text('Refresh'),
+                    tooltip: 'Refresh',
                   ),
                 ],
               ),
@@ -534,7 +529,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
           ],
 
           // Search bar
-          if (_hasPermission && _messages.isNotEmpty) ...[
+          if (_hasPermission && _pendingMessages.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -550,7 +545,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  hintText: 'Search by code, name, or type...',
+                  hintText: 'Search pending transactions...',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _filterQuery.isNotEmpty
                       ? IconButton(
@@ -591,7 +586,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Loading MPESA messages...'),
+            Text('Loading pending transactions...'),
           ],
         ),
       );
@@ -644,7 +639,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               ),
               const SizedBox(height: 12),
               Text(
-                'This app needs permission to read SMS messages to display MPESA transactions.',
+                'To detect pending MPESA transactions from SMS, please grant SMS permission.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -671,48 +666,49 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       );
     }
 
-    if (_filteredMessages.isEmpty) {
+    if (_filteredPendingMessages.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              _filterQuery.isEmpty ? Icons.inbox : Icons.search_off,
+              _filterQuery.isEmpty ? Icons.check_circle : Icons.search_off,
               size: 64,
-              color: Colors.grey[400],
+              color: _filterQuery.isEmpty ? Colors.green[300] : Colors.grey[400],
             ),
             const SizedBox(height: 16),
             Text(
               _filterQuery.isEmpty
-                  ? 'No MPESA messages found'
-                  : 'No messages match your search',
+                  ? 'All Caught Up!'
+                  : 'No Results Found',
               style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[700],
               ),
             ),
             const SizedBox(height: 8),
-            if (_filterQuery.isEmpty && _userCreatedAt != null) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Text(
-                  'No supported MPESA messages (Till, Send, Received, Paybill) since ${DateFormat('MMM dd, yyyy').format(_userCreatedAt!)}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[500],
-                  ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                _filterQuery.isEmpty
+                    ? 'All your MPESA transactions have been recorded'
+                    : 'No pending transactions match your search',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
                 ),
               ),
-            ],
+            ),
             if (_filterQuery.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               TextButton(
                 onPressed: () {
                   _searchController.clear();
                   setState(() => _filterQuery = '');
                 },
-                child: const Text('Clear search'),
+                child: const Text('Clear Search'),
               ),
             ],
           ],
@@ -724,36 +720,29 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       onRefresh: _loadMessages,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _filteredMessages.length,
+        itemCount: _filteredPendingMessages.length,
         itemBuilder: (context, index) {
-          final message = _filteredMessages[index];
-          final isPending = !(_transactionExists[message.transactionCode] ?? false);
-          return _buildMessageCard(message, isPending);
+          final message = _filteredPendingMessages[index];
+          return _buildPendingCard(message);
         },
       ),
     );
   }
 
-  Widget _buildMessageCard(ParsedMpesaMessage message, bool isPending) {
+  Widget _buildPendingCard(ParsedMpesaMessage message) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: isPending ? 3 : 1,
-      color: isPending ? Colors.orange.shade50 : Colors.green.shade50,
-      child: InkWell(
-        onTap: () {
-          if (isPending) {
-            _navigateToAddTransaction(message);
-          } else {
-            _showMessageDetails(message, isPending);
-          }
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      elevation: 3,
+      color: Colors.orange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: () => _navigateToAddTransaction(message),
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(8),
@@ -772,46 +761,23 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: message.typeColor,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                message.typeLabel,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: message.typeColor,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            message.typeLabel,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
                             ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isPending ? Colors.orange : Colors.green,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                isPending ? 'PENDING' : 'RECORDED',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -847,19 +813,232 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                       ),
                       const SizedBox(height: 4),
                       Icon(
-                        isPending ? Icons.add_circle : Icons.check_circle,
+                        Icons.add_circle,
                         size: 18,
-                        color: isPending ? Colors.orange.shade700 : Colors.green.shade700,
+                        color: Colors.orange.shade700,
                       ),
                     ],
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+            
+            // Action buttons row
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: () => _showDiscardConfirmation(message),
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text('Discard'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToAddTransaction(message),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add Transaction'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade700,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  void _showDiscardConfirmation(ParsedMpesaMessage message) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
+            const SizedBox(width: 12),
+            const Text('Discard Transaction?'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Are you sure you want to discard this transaction?',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: message.typeColor,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          message.typeLabel,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          message.displayName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        message.transactionCode,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[700],
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      Text(
+                        'KES ${NumberFormat('#,##0.00').format(message.amount)}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: message.isDebit ? Colors.red : Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'This will mark it as processed without adding it to your transactions. This action cannot be undone.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _discardTransaction(message);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Yes, Discard'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _discardTransaction(ParsedMpesaMessage message) async {
+    try {
+      final userId = getUserId();
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
+
+      // Create a "discarded" marker transaction with zero amount
+      // This marks the transaction code as processed without adding it to reports
+      await db.execute('''
+        INSERT INTO transactions(
+          id, user_id, title, amount, type, category_id, date, 
+          notes, created_at, updated_at, mpesa_code
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ''', [
+        uuid.v4(),
+        userId,
+        '[DISCARDED] ${message.displayName}',
+        0.0, // Zero amount so it doesn't affect reports
+        message.isDebit ? 'expense' : 'income',
+        'discarded', // Special category marker
+        message.transactionDate.toIso8601String(),
+        'Discarded MPESA transaction\nCode: ${message.transactionCode}\nOriginal Amount: KES ${NumberFormat('#,##0.00').format(message.amount)}',
+        DateTime.now().toIso8601String(),
+        DateTime.now().toIso8601String(),
+        message.transactionCode,
+      ]);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Transaction discarded: ${message.transactionCode}',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+
+        // Refresh the list
+        await _loadMessages();
+      }
+    } catch (e) {
+      print('Error discarding transaction: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error discarding transaction: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
   }
 
   IconData _getIconForType(SupportedMpesaType type) {
@@ -890,237 +1069,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       // Refresh messages after adding transaction
       _loadMessages();
     });
-  }
-
-  void _showMessageDetails(ParsedMpesaMessage message, bool isPending) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.5,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) {
-          return SingleChildScrollView(
-            controller: scrollController,
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Status Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isPending ? Colors.orange.shade100 : Colors.green.shade100,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isPending ? Icons.pending_actions : Icons.check_circle,
-                        size: 16,
-                        color: isPending ? Colors.orange.shade700 : Colors.green.shade700,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        isPending ? 'PENDING TRANSACTION' : 'ALREADY RECORDED',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isPending ? Colors.orange.shade900 : Colors.green.shade900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: 24),
-                
-                // Type Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: message.typeColor,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    message.typeLabel,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                
-                const SizedBox(height: 16),
-                
-                // Transaction Details
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Transaction Details',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _buildDetailRow('Code', message.transactionCode),
-                      _buildDetailRow('Amount', 'KES ${NumberFormat('#,##0.00').format(message.amount)}'),
-                      _buildDetailRow('Type', message.typeLabel),
-                      _buildDetailRow('Counterparty', message.counterpartyName),
-                      if (message.counterpartyNumber != null)
-                        _buildDetailRow('Number', message.counterpartyNumber!),
-                      _buildDetailRow(
-                        'Date & Time',
-                        DateFormat('EEEE, MMM dd, yyyy • h:mm a').format(message.transactionDate),
-                      ),
-                      _buildDetailRow(
-                        'Direction',
-                        message.isDebit ? 'Money Out (Expense)' : 'Money In (Income)',
-                      ),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: 16),
-                
-                // Original SMS
-                const Text(
-                  'Original SMS',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey[300]!),
-                  ),
-                  child: SelectableText(
-                    message.rawMessage,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      height: 1.6,
-                    ),
-                  ),
-                ),
-                
-                const SizedBox(height: 24),
-                
-                // Action Buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: message.rawMessage));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Message copied to clipboard'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.copy, size: 18),
-                        label: const Text('Copy'),
-                      ),
-                    ),
-                    if (isPending) ...[
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _navigateToAddTransaction(message);
-                          },
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('Add Transaction'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close, size: 18),
-                          label: const Text('Close'),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
