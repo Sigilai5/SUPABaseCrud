@@ -1,4 +1,4 @@
-// lib/services/mpesa_service.dart - WITH APP CLOSE AFTER OVERLAY ADD
+// lib/services/mpesa_service.dart - DOES NOT AUTO-SAVE - Only shows overlay/pending
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../main.dart'; // Import to access navigatorKey
@@ -62,54 +62,58 @@ class MpesaService {
     print('  Amount: ${mpesaData.amount}');
     print('  Counterparty: ${mpesaData.counterpartyName}');
 
-    // Check if this transaction code already exists
-    final exists = await MpesaTransaction.exists(mpesaData.transactionCode);
-    if (exists) {
-      print('Transaction ${mpesaData.transactionCode} already recorded');
+    // Check if this transaction code already exists in TRANSACTIONS table (not mpesa_transactions)
+    // We only check if user has already recorded this as a transaction
+    final userId = getUserId();
+    if (userId == null) {
+      print('User not logged in');
       return;
     }
 
-    // Save to mpesa_transactions table with auto-generated notes
-    final mpesaTx = await MpesaTransaction.create(
-      transactionCode: mpesaData.transactionCode,
-      transactionType: mpesaData.transactionType,
-      amount: mpesaData.amount,
-      counterpartyName: mpesaData.counterpartyName,
-      counterpartyNumber: mpesaData.counterpartyNumber,
-      transactionDate: mpesaData.transactionDate,
-      newBalance: mpesaData.newBalance,
-      transactionCost: mpesaData.transactionCost,
-      isDebit: mpesaData.isDebit,
-      rawMessage: message,
-      notes: EnhancedMpesaParser.generateNotes(mpesaData),
-    );
+    final alreadyRecorded = await db.getOptional('''
+      SELECT COUNT(*) as count FROM transactions 
+      WHERE user_id = ? AND mpesa_code = ?
+    ''', [userId, mpesaData.transactionCode]);
+    
+    final count = (alreadyRecorded?['count'] as int?) ?? 0;
+    if (count > 0) {
+      print('Transaction ${mpesaData.transactionCode} already recorded by user');
+      return;
+    }
 
-    print('✓ MPESA transaction saved to database: ${mpesaTx.id}');
+    print('✓ New unrecorded MPESA transaction detected');
 
-    // Store for potential overlay confirmation
-    _pendingMpesaTransaction = mpesaTx;
+    // DO NOT auto-save to mpesa_transactions table
+    // Just show overlay for user confirmation
 
     // Check overlay permission and show if granted
     final hasPermission = await hasOverlayPermission();
     if (!hasPermission) {
-      print('No overlay permission - transaction saved to pending');
+      print('No overlay permission - transaction will appear in pending SMS list');
       return;
     }
 
-    await _showTransactionOverlay(mpesaTx);
+    // Show overlay with transaction data directly (no database storage yet)
+    await _showTransactionOverlayFromData(mpesaData, sender, message);
   }
 
-  static Future<void> _showTransactionOverlay(MpesaTransaction mpesaTx) async {
+  static Future<void> _showTransactionOverlayFromData(
+    MpesaTransactionData mpesaData,
+    String sender,
+    String message,
+  ) async {
     try {
-      print('=== Showing Transaction Overlay ===');
+      print('=== Showing Transaction Overlay (from parsed data) ===');
+      
+      final displayName = EnhancedMpesaParser.getTransactionDescription(mpesaData);
       
       final overlayData = {
-        'title': mpesaTx.getDisplayName(),
-        'amount': mpesaTx.amount,
-        'type': mpesaTx.isDebit ? 'expense' : 'income',
-        'sender': 'MPESA',
-        'transactionCode': mpesaTx.transactionCode,
-        'rawMessage': mpesaTx.rawMessage,
+        'title': displayName,
+        'amount': mpesaData.amount,
+        'type': mpesaData.isDebit ? 'expense' : 'income',
+        'sender': sender,
+        'transactionCode': mpesaData.transactionCode,
+        'rawMessage': message,
       };
       
       print('Overlay data prepared: ${overlayData.keys}');
@@ -133,24 +137,27 @@ class MpesaService {
   }
 
   static Future<void> _saveAsTransaction(
-    MpesaTransaction mpesaTx, {
+    String transactionCode,
+    String title,
+    double amount,
+    String type,
+    String rawMessage, {
     String? editedTitle,
     String? editedNotes,
     String? categoryId,
     double? latitude,
     double? longitude,
-    bool fromOverlay = false,  // NEW: Track if from overlay
+    bool fromOverlay = false,
   }) async {
     try {
       print('=== Saving MPESA transaction as regular transaction ===');
-      print('MPESA ID: ${mpesaTx.id}');
-      print('Transaction Code: ${mpesaTx.transactionCode}');
-      print('Title: $editedTitle');
-      print('Amount: ${mpesaTx.amount}');
-      print('Type: ${mpesaTx.isDebit ? 'expense' : 'income'}');
+      print('Transaction Code: $transactionCode');
+      print('Title: ${editedTitle ?? title}');
+      print('Amount: $amount');
+      print('Type: $type');
       print('Category ID: $categoryId');
       print('Location: $latitude, $longitude');
-      print('From Overlay: $fromOverlay');  // NEW: Log source
+      print('From Overlay: $fromOverlay');
       
       // Get or create category if no category provided
       Category? category;
@@ -181,22 +188,22 @@ class MpesaService {
         }
       }
 
-      // Use ONLY user's notes - nothing auto-generated
+      // Use ONLY user's notes
       final userNotes = (editedNotes != null && editedNotes.trim().isNotEmpty)
           ? editedNotes.trim()
           : null;
 
       // Create the regular transaction
       final transaction = await Transaction.create(
-        title: editedTitle ?? mpesaTx.getDisplayName(),
-        amount: mpesaTx.amount,
-        type: mpesaTx.isDebit ? TransactionType.expense : TransactionType.income,
+        title: editedTitle ?? title,
+        amount: amount,
+        type: type == 'income' ? TransactionType.income : TransactionType.expense,
         categoryId: category.id,
-        date: mpesaTx.transactionDate,
+        date: DateTime.now(),
         notes: userNotes,
         latitude: latitude,
         longitude: longitude,
-        mpesaCode: mpesaTx.transactionCode,
+        mpesaCode: transactionCode,
       );
 
       print('✓ Regular transaction created with ID: ${transaction.id}');
@@ -204,101 +211,20 @@ class MpesaService {
         print('✓ Location saved: $latitude, $longitude');
       }
       
-      // CRITICAL FIX: Get fresh MPESA transaction from database using transaction code
-      print('Fetching fresh MPESA transaction from database...');
-      
-      MpesaTransaction? mpesaFromDb;
-      int retryCount = 0;
-      const maxRetries = 5;
-      
-      while (mpesaFromDb == null && retryCount < maxRetries) {
-        // Progressive delay: 100ms, 200ms, 300ms, 400ms, 500ms
-        await Future.delayed(Duration(milliseconds: 100 * (retryCount + 1)));
-        print('Attempt ${retryCount + 1}: Fetching MPESA transaction by code...');
-        mpesaFromDb = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
-        retryCount++;
-      }
-      
-      if (mpesaFromDb == null) {
-        print('⚠ ERROR: Could not find MPESA transaction in database after $maxRetries retries');
-        print('Transaction code: ${mpesaTx.transactionCode}');
-        throw Exception('MPESA transaction not found in database after $maxRetries retries');
-      }
-      
-      print('✓ Found MPESA transaction in database: ${mpesaFromDb.id}');
-      print('Current linked_transaction_id: ${mpesaFromDb.linkedTransactionId}');
-      
-      // Now link using the database-fetched instance
-      print('Linking MPESA transaction ${mpesaFromDb.id} to transaction ${transaction.id}');
-      
-      try {
-        await mpesaFromDb.linkToTransaction(transaction.id);
-        print('✓ linkToTransaction method executed');
-      } catch (e) {
-        print('✗ ERROR in linkToTransaction: $e');
-        // Continue to verification - we'll use fallback if needed
-      }
-      
-      // Wait for the link to be committed
-      await Future.delayed(const Duration(milliseconds: 200));
-      
-      // VERIFY the link was created
-      final verifyMpesa = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
-      if (verifyMpesa?.linkedTransactionId == transaction.id) {
-        print('✓ VERIFIED: Link successfully created');
-        print('  linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
-      } else {
-        print('⚠ WARNING: Link verification failed');
-        print('  Expected linked_transaction_id: ${transaction.id}');
-        print('  Actual linked_transaction_id: ${verifyMpesa?.linkedTransactionId}');
-        
-        // FALLBACK: Direct SQL update
-        if (verifyMpesa != null && verifyMpesa.linkedTransactionId == null) {
-          print('Attempting direct SQL update as fallback...');
-          try {
-            final userId = getUserId();
-            if (userId == null) {
-              throw Exception('User ID is null');
-            }
-            
-            await db.execute('''
-              UPDATE mpesa_transactions 
-              SET linked_transaction_id = ?
-              WHERE transaction_code = ? AND user_id = ?
-            ''', [transaction.id, mpesaTx.transactionCode, userId]);
-            
-            print('✓ Direct SQL update executed');
-            
-            await Future.delayed(const Duration(milliseconds: 200));
-            
-            // Final verification
-            final finalCheck = await MpesaTransaction.getByCode(mpesaTx.transactionCode);
-            if (finalCheck?.linkedTransactionId == transaction.id) {
-              print('✓ VERIFIED: Link created via direct SQL update');
-            } else {
-              print('✗ ERROR: Link still failed after direct SQL update');
-              print('  Final linked_transaction_id: ${finalCheck?.linkedTransactionId}');
-            }
-          } catch (e) {
-            print('✗ ERROR: Direct SQL update failed: $e');
-          }
-        }
-      }
-      
       // Clear from any pending stores
       try {
         await _channel.invokeMethod('removePendingTransaction', {
-          'transactionCode': mpesaTx.transactionCode,
+          'transactionCode': transactionCode,
         });
         print('✓ Removed from SharedPreferences');
       } catch (e) {
         print('Note: Could not remove from SharedPreferences: $e');
       }
       
-      // NEW: Close app if from overlay
+      // Close app if from overlay
       if (fromOverlay) {
         print('Transaction added from overlay - closing app...');
-        await Future.delayed(const Duration(milliseconds: 500)); // Brief delay for UI feedback
+        await Future.delayed(const Duration(milliseconds: 500));
         await _closeApp();
       }
       
@@ -363,8 +289,20 @@ class MpesaService {
           
           final transactionCode = data['transactionCode'] as String;
           
-          final exists = await MpesaTransaction.exists(transactionCode);
-          if (exists) {
+          // Check if already recorded (check transactions table, not mpesa_transactions)
+          final userId = getUserId();
+          if (userId == null) {
+            print('User not logged in, skipping');
+            continue;
+          }
+
+          final alreadyRecorded = await db.getOptional('''
+            SELECT COUNT(*) as count FROM transactions 
+            WHERE user_id = ? AND mpesa_code = ?
+          ''', [userId, transactionCode]);
+          
+          final count = (alreadyRecorded?['count'] as int?) ?? 0;
+          if (count > 0) {
             print('Transaction $transactionCode already exists, skipping');
             successCount++;
             continue;
@@ -395,29 +333,6 @@ class MpesaService {
           }
           
           final type = data['type'] as String;
-          final isDebit = type == 'expense';
-          
-          final userNotes = data['notes'] as String?;
-          final mpesaAutoNotes = 'Auto-recovered from offline storage\nTransaction Code: $transactionCode';
-          
-          final finalNotes = (userNotes != null && userNotes.isNotEmpty && !userNotes.contains('Auto-detected'))
-              ? '$mpesaAutoNotes\n\nUser Notes:\n$userNotes'
-              : mpesaAutoNotes;
-          
-          final mpesaTx = await MpesaTransaction.create(
-            transactionCode: transactionCode,
-            transactionType: isDebit ? MpesaTransactionType.send : MpesaTransactionType.received,
-            amount: (data['amount'] as num).toDouble(),
-            counterpartyName: 'Unknown',
-            transactionDate: DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int),
-            newBalance: 0.0,
-            transactionCost: 0.0,
-            isDebit: isDebit,
-            rawMessage: 'Recovered from offline storage',
-            notes: finalNotes,
-          );
-          
-          print('✓ Created MPESA transaction: ${mpesaTx.id}');
           
           String? notes = data['notes'] as String?;
           if (notes != null && notes.isEmpty) {
@@ -428,13 +343,17 @@ class MpesaService {
           final longitude = data['longitude'] as double?;
           
           await _saveAsTransaction(
-            mpesaTx,
+            transactionCode,
+            data['title'] as String,
+            (data['amount'] as num).toDouble(),
+            type,
+            'Recovered from offline storage',
             editedTitle: data['title'] as String,
             editedNotes: notes,
             categoryId: categoryId,
             latitude: latitude,
             longitude: longitude,
-            fromOverlay: false,  // NEW: These are from storage, not overlay
+            fromOverlay: false,
           );
           
           successCount++;
@@ -530,7 +449,7 @@ class MpesaService {
         }
       }
       
-      // NEW: Close app after returning from form (transaction was added from overlay)
+      // Close app after returning from form
       print('Returned from transaction form - closing app...');
       await Future.delayed(const Duration(milliseconds: 300));
       await _closeApp();

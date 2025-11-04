@@ -122,7 +122,7 @@ class OverlayService : Service() {
             Log.d(TAG, "=== Add button clicked ===")
 
             // Save transaction data for the app to process
-            savePendingTransaction()
+//            savePendingTransaction()
 
             // Launch the app to the transaction form
             launchAppWithTransaction()
