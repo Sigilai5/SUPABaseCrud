@@ -1,16 +1,17 @@
 // lib/widgets/sms/sms_messages_page.dart
 // FOCUSED VERSION - Shows ONLY pending (unrecorded) transactions
+// UPDATED - Uses start_afresh table instead of user creation date
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../common/status_app_bar.dart';
 import '../../powersync.dart';
 import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
+import '../../models/start_afresh.dart'; // ✓ ADDED THIS
 
 // Supported MPESA transaction types
 enum SupportedMpesaType {
@@ -102,26 +103,40 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
   @override
   void initState() {
     super.initState();
-    _getUserCreationDate();
+    _getStartAfreshTime();
   }
 
-  Future<void> _getUserCreationDate() async {
+  // ✓ UPDATED METHOD - Uses start_afresh table
+  Future<void> _getStartAfreshTime() async {
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user != null && user.createdAt != null) {
+      print('=== Getting Start Afresh Time ===');
+      
+      // Get start_afresh time from database
+      final startTime = await StartAfresh.getStartTime();
+      
+      if (startTime != null) {
         setState(() {
-          _userCreatedAt = DateTime.parse(user.createdAt!);
+          _userCreatedAt = startTime;
         });
-        print('User account created at: $_userCreatedAt');
+        print('✓ Start Afresh time: $_userCreatedAt (${_userCreatedAt?.timeZoneName})');
+        print('  Timezone offset: ${_userCreatedAt?.timeZoneOffset}');
       } else {
+        // If no start_afresh record exists, create one
+        print('⚠ No start_afresh record found, creating initial record...');
+        await StartAfresh.ensureExists();
+        
+        // Try getting it again
+        final newStartTime = await StartAfresh.getStartTime();
         setState(() {
-          _userCreatedAt = DateTime.now();
+          _userCreatedAt = newStartTime ?? DateTime.now();
         });
-        print('User creation date not available, using current time');
+        print('✓ Created start_afresh record with time: $_userCreatedAt');
       }
+      
       await _checkPermissionAndLoadMessages();
-    } catch (e) {
-      print('Error getting user creation date: $e');
+    } catch (e, stackTrace) {
+      print('✗ Error getting start_afresh time: $e');
+      print('Stack trace: $stackTrace');
       setState(() {
         _userCreatedAt = DateTime.now();
       });
@@ -296,9 +311,9 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
 
   Future<void> _loadMessages() async {
     if (_userCreatedAt == null) {
-      print('User creation date not available, cannot load messages');
+      print('Start Afresh time not available, cannot load messages');
       setState(() {
-        _error = 'Could not determine account creation date';
+        _error = 'Could not determine tracking start time';
         _isLoading = false;
       });
       return;
@@ -309,7 +324,8 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     try {
       final SmsQuery query = SmsQuery();
       
-      print('Loading SMS messages from ${_userCreatedAt!.toIso8601String()}');
+      print('=== Loading SMS Messages ===');
+      print('Tracking started: ${_userCreatedAt!.toIso8601String()} (${_userCreatedAt!.timeZoneName})');
       
       final allMessages = await query.querySms(
         kinds: [SmsQueryKind.inbox],
@@ -318,7 +334,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
 
       print('Total SMS messages found: ${allMessages.length}');
 
-      // Filter for MPESA messages after user creation and parse them
+      // Filter for MPESA messages after start_afresh time and parse them
       List<ParsedMpesaMessage> parsedMessages = [];
       
       for (var message in allMessages) {
@@ -335,11 +351,11 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         
         if (!isMpesa) continue;
         
-        // Check if after user creation
-        final isAfterCreation = messageDate != null && 
-                                messageDate.isAfter(_userCreatedAt!);
+        // Check if after start_afresh time
+        final isAfterStart = messageDate != null && 
+                             messageDate.isAfter(_userCreatedAt!);
         
-        if (!isAfterCreation) continue;
+        if (!isAfterStart) continue;
         
         // Parse and filter for supported types only
         final parsed = _parseMpesaMessage(body);
@@ -367,10 +383,13 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         _isLoading = false;
       });
 
+      print('=== Summary ===');
       print('Pending (unrecorded) transactions: ${pending.length}');
+      print('Already recorded transactions: ${parsedMessages.length - pending.length}');
 
-    } catch (e) {
-      print('Error loading messages: $e');
+    } catch (e, stackTrace) {
+      print('✗ Error loading messages: $e');
+      print('Stack trace: $stackTrace');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -528,6 +547,29 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
           ],
 
+          // Info banner showing tracking start time
+          if (_hasPermission && !_isLoading && _userCreatedAt != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.blue.shade50,
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Showing MPESA messages since ${DateFormat('MMM dd, yyyy h:mm a').format(_userCreatedAt!)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           // Search bar
           if (_hasPermission && _pendingMessages.isNotEmpty) ...[
             Container(
@@ -608,7 +650,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _getUserCreationDate,
+              onPressed: _getStartAfreshTime,
               child: const Text('Retry'),
             ),
           ],

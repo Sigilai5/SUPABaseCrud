@@ -19,9 +19,10 @@ class StartAfresh {
   factory StartAfresh.fromRow(sqlite.Row row) {
     return StartAfresh(
       userId: row['user_id'],
-      startTime: DateTime.parse(row['start_time']),
-      createdAt: DateTime.parse(row['created_at']),
-      updatedAt: DateTime.parse(row['updated_at']),
+      // Convert stored times to local timezone (Nairobi time in your case)
+      startTime: DateTime.parse(row['start_time']).toLocal(),
+      createdAt: DateTime.parse(row['created_at']).toLocal(),
+      updatedAt: DateTime.parse(row['updated_at']).toLocal(),
     );
   }
 
@@ -45,7 +46,11 @@ class StartAfresh {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
 
-    final now = DateTime.now().toIso8601String();
+    // Use local time
+    final now = DateTime.now();
+    final nowString = now.toIso8601String();
+    
+    print('Creating initial start_afresh record with local time: $now (${now.timeZoneName})');
     
     final results = await db.execute('''
       INSERT INTO $startAfreshTable(
@@ -55,9 +60,9 @@ class StartAfresh {
     ''', [
       uuid.v4(),
       userId,
-      now, // start_time defaults to now
-      now,
-      now,
+      nowString, // start_time defaults to now (local time)
+      nowString,
+      nowString,
     ]);
     
     return StartAfresh.fromRow(results.first);
@@ -69,14 +74,18 @@ class StartAfresh {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
 
-    final now = DateTime.now().toIso8601String();
+    // Use local time
+    final now = DateTime.now();
+    final nowString = now.toIso8601String();
+    
+    print('Resetting start_afresh to local time: $now (${now.timeZoneName})');
     
     // Update existing record
     await db.execute('''
       UPDATE $startAfreshTable 
       SET start_time = ?, updated_at = ?
       WHERE user_id = ?
-    ''', [now, now, userId]);
+    ''', [nowString, nowString, userId]);
     
     // Return the updated record
     final record = await getForCurrentUser();
@@ -115,5 +124,25 @@ class StartAfresh {
       await createInitial();
       print('✓ Created initial start_afresh record');
     }
+  }
+
+  /// Get a formatted string showing the start time in local timezone
+  String getFormattedStartTime() {
+    return '${startTime.day}/${startTime.month}/${startTime.year} at ${startTime.hour}:${startTime.minute.toString().padLeft(2, '0')} (${startTime.timeZoneName})';
+  }
+
+  /// Get days since start time
+  int getDaysSinceStart() {
+    final now = DateTime.now();
+    final difference = now.difference(startTime);
+    return difference.inDays;
+  }
+
+  /// Check if the start time is today
+  bool isToday() {
+    final now = DateTime.now();
+    return startTime.year == now.year &&
+           startTime.month == now.month &&
+           startTime.day == now.day;
   }
 }
