@@ -4,6 +4,7 @@ import 'package:powersync/powersync.dart';
 const transactionsTable = 'transactions';
 const categoriesTable = 'categories';
 const mpesaTransactionsTable = 'mpesa_transactions';
+const startAfreshTable = 'start_afresh';
 
 Schema schema = Schema([
   // Transactions table for income and expenses
@@ -65,5 +66,15 @@ Schema schema = Schema([
     Index('mpesa_date', [IndexedColumn('transaction_date')]),
     Index('mpesa_type', [IndexedColumn('transaction_type')]),
     Index('mpesa_linked', [IndexedColumn('linked_transaction_id')]),
+  ]),
+
+  // Start Afresh table - tracks when user wants to start with a clean slate
+  const Table(startAfreshTable, [
+    Column.text('user_id'),           // Owner (primary key)
+    Column.text('start_time'),        // When user started fresh (ISO string)
+    Column.text('created_at'),        // When record was created
+    Column.text('updated_at'),        // Last update timestamp
+  ], indexes: [
+    Index('user_start_afresh', [IndexedColumn('user_id')]),
   ]),
 ]);
