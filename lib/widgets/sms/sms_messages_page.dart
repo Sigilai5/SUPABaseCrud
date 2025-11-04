@@ -1,6 +1,5 @@
 // lib/widgets/sms/sms_messages_page.dart
-// FOCUSED VERSION - Shows ONLY pending (unrecorded) transactions
-// UPDATED - Uses start_afresh table instead of user creation date
+// FIXED VERSION - Properly handles start_afresh time from database
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +10,7 @@ import '../common/status_app_bar.dart';
 import '../../powersync.dart';
 import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
-import '../../models/start_afresh.dart'; // ✓ ADDED THIS
+import '../../models/start_afresh.dart';
 
 // Supported MPESA transaction types
 enum SupportedMpesaType {
@@ -106,10 +105,17 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     _getStartAfreshTime();
   }
 
-  // ✓ UPDATED METHOD - Uses start_afresh table
+  // ✓ FIXED METHOD - Properly retrieves and validates start_afresh time
   Future<void> _getStartAfreshTime() async {
     try {
       print('=== Getting Start Afresh Time ===');
+      print('Current time: ${DateTime.now()}');
+      print('Current time (local): ${DateTime.now().toLocal()}');
+      print('Current time (UTC): ${DateTime.now().toUtc()}');
+      
+      // Ensure start_afresh record exists first
+      await StartAfresh.ensureExists();
+      print('✓ Ensured start_afresh record exists');
       
       // Get start_afresh time from database
       final startTime = await StartAfresh.getStartTime();
@@ -118,19 +124,38 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         setState(() {
           _userCreatedAt = startTime;
         });
-        print('✓ Start Afresh time: $_userCreatedAt (${_userCreatedAt?.timeZoneName})');
-        print('  Timezone offset: ${_userCreatedAt?.timeZoneOffset}');
-      } else {
-        // If no start_afresh record exists, create one
-        print('⚠ No start_afresh record found, creating initial record...');
-        await StartAfresh.ensureExists();
         
-        // Try getting it again
-        final newStartTime = await StartAfresh.getStartTime();
+        // Detailed debugging
+        print('✓ Start Afresh time retrieved: $_userCreatedAt');
+        print('  As stored: $startTime');
+        print('  Local time: ${_userCreatedAt?.toLocal()}');
+        print('  UTC time: ${_userCreatedAt?.toUtc()}');
+        print('  Timezone: ${_userCreatedAt?.timeZoneName}');
+        print('  Timezone offset: ${_userCreatedAt?.timeZoneOffset}');
+        print('  Is UTC: ${_userCreatedAt?.isUtc}');
+        
+        final now = DateTime.now();
+        print('  Is in the past: ${_userCreatedAt!.isBefore(now)}');
+        print('  Is in the future: ${_userCreatedAt!.isAfter(now)}');
+        print('  Days difference: ${now.difference(_userCreatedAt!).inDays}');
+        print('  Hours difference: ${now.difference(_userCreatedAt!).inHours}');
+        print('  Minutes difference: ${now.difference(_userCreatedAt!).inMinutes}');
+        
+        // Validate that the time makes sense
+        if (_userCreatedAt!.isAfter(now)) {
+          print('⚠ WARNING: Start time is in the future! This shouldn\'t happen.');
+          print('  Using current time instead');
+          setState(() {
+            _userCreatedAt = now;
+          });
+        }
+      } else {
+        // This shouldn't happen after ensureExists, but handle it anyway
+        print('⚠ WARNING: No start_afresh time available after ensureExists');
         setState(() {
-          _userCreatedAt = newStartTime ?? DateTime.now();
+          _userCreatedAt = DateTime.now();
         });
-        print('✓ Created start_afresh record with time: $_userCreatedAt');
+        print('✓ Using current time as fallback: $_userCreatedAt');
       }
       
       await _checkPermissionAndLoadMessages();
@@ -310,52 +335,73 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
   }
 
   Future<void> _loadMessages() async {
-    if (_userCreatedAt == null) {
-      print('Start Afresh time not available, cannot load messages');
-      setState(() {
-        _error = 'Could not determine tracking start time';
-        _isLoading = false;
-      });
-      return;
-    }
+  if (_userCreatedAt == null) {
+    print('Start Afresh time not available, cannot load messages');
+    setState(() {
+      _error = 'Could not determine tracking start time';
+      _isLoading = false;
+    });
+    return;
+  }
 
-    setState(() => _isLoading = true);
+  setState(() => _isLoading = true);
 
-    try {
-      final SmsQuery query = SmsQuery();
+  try {
+    final SmsQuery query = SmsQuery();
+    
+    print('=== Loading SMS Messages ===');
+    print('Tracking started: ${_userCreatedAt!.toIso8601String()}');
+    print('Tracking started (local): ${_userCreatedAt!.toLocal()}');
+    print('Tracking started (formatted): ${DateFormat('MMM dd, yyyy h:mm:ss a').format(_userCreatedAt!)}');
+    
+    final allMessages = await query.querySms(
+      kinds: [SmsQueryKind.inbox],
+      count: 1000,
+    );
+
+    print('Total SMS messages found: ${allMessages.length}');
+
+    // Filter for MPESA messages after start_afresh time and parse them
+    List<ParsedMpesaMessage> parsedMessages = [];
+    int mpesaCount = 0;
+    int afterStartCount = 0;
+    
+    // FIX: Normalize both dates to the same timezone for accurate comparison
+    final normalizedStartTime = _userCreatedAt!.toLocal();
+    
+    for (var message in allMessages) {
+      final sender = message.address?.toUpperCase() ?? '';
+      final body = message.body ?? '';
+      final messageDate = message.date;
       
-      print('=== Loading SMS Messages ===');
-      print('Tracking started: ${_userCreatedAt!.toIso8601String()} (${_userCreatedAt!.timeZoneName})');
+      // Check if MPESA message
+      final isMpesa = sender.contains('MPESA') || 
+                      sender.contains('M-PESA') ||
+                      body.toUpperCase().contains('MPESA') ||
+                      body.toUpperCase().contains('M-PESA') ||
+                      sender.startsWith('MPESA');
       
-      final allMessages = await query.querySms(
-        kinds: [SmsQueryKind.inbox],
-        count: 1000,
-      );
-
-      print('Total SMS messages found: ${allMessages.length}');
-
-      // Filter for MPESA messages after start_afresh time and parse them
-      List<ParsedMpesaMessage> parsedMessages = [];
+      if (!isMpesa) continue;
+      mpesaCount++;
       
-      for (var message in allMessages) {
-        final sender = message.address?.toUpperCase() ?? '';
-        final body = message.body ?? '';
-        final messageDate = message.date;
-        
-        // Check if MPESA message
-        final isMpesa = sender.contains('MPESA') || 
-                        sender.contains('M-PESA') ||
-                        body.toUpperCase().contains('MPESA') ||
-                        body.toUpperCase().contains('M-PESA') ||
-                        sender.startsWith('MPESA');
-        
-        if (!isMpesa) continue;
-        
-        // Check if after start_afresh time
-        final isAfterStart = messageDate != null && 
-                             messageDate.isAfter(_userCreatedAt!);
-        
-        if (!isAfterStart) continue;
+      // Check if after start_afresh time - FIXED COMPARISON
+      if (messageDate == null) continue;
+      
+      // FIX: Normalize message date to local timezone and compare
+      final normalizedMessageDate = messageDate.toLocal();
+      final isAfterStart = normalizedMessageDate.isAfter(normalizedStartTime);
+      
+      // DEBUG: Log some comparisons for troubleshooting
+      if (mpesaCount <= 5) { // Log first 5 MPESA messages for debugging
+        print('MPESA Message ${mpesaCount}:');
+        print('  Message date: $normalizedMessageDate');
+        print('  Start date:   $normalizedStartTime');
+        print('  Is after start: $isAfterStart');
+        print('  Difference: ${normalizedMessageDate.difference(normalizedStartTime).inHours} hours');
+      }
+      
+      if (isAfterStart) {
+        afterStartCount++;
         
         // Parse and filter for supported types only
         final parsed = _parseMpesaMessage(body);
@@ -363,39 +409,42 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
           parsedMessages.add(parsed);
         }
       }
-
-      // Sort by date (newest first)
-      parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-
-      print('Filtered MPESA messages (supported types): ${parsedMessages.length}');
-
-      // Check which transactions exist in database
-      await _checkTransactionExistence(parsedMessages);
-
-      // Filter to get only pending transactions
-      final pending = parsedMessages.where((msg) => 
-        !(_transactionExists[msg.transactionCode] ?? false)
-      ).toList();
-
-      setState(() {
-        _allMessages = parsedMessages;
-        _pendingMessages = pending;
-        _isLoading = false;
-      });
-
-      print('=== Summary ===');
-      print('Pending (unrecorded) transactions: ${pending.length}');
-      print('Already recorded transactions: ${parsedMessages.length - pending.length}');
-
-    } catch (e, stackTrace) {
-      print('✗ Error loading messages: $e');
-      print('Stack trace: $stackTrace');
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
     }
+
+    // Sort by date (newest first)
+    parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+
+    print('MPESA messages found: $mpesaCount');
+    print('MPESA messages after start time: $afterStartCount');
+    print('Parsed (supported types): ${parsedMessages.length}');
+
+    // Check which transactions exist in database
+    await _checkTransactionExistence(parsedMessages);
+
+    // Filter to get only pending transactions
+    final pending = parsedMessages.where((msg) => 
+      !(_transactionExists[msg.transactionCode] ?? false)
+    ).toList();
+
+    setState(() {
+      _allMessages = parsedMessages;
+      _pendingMessages = pending;
+      _isLoading = false;
+    });
+
+    print('=== Summary ===');
+    print('Pending (unrecorded) transactions: ${pending.length}');
+    print('Already recorded transactions: ${parsedMessages.length - pending.length}');
+
+  } catch (e, stackTrace) {
+    print('✗ Error loading messages: $e');
+    print('Stack trace: $stackTrace');
+    setState(() {
+      _error = e.toString();
+      _isLoading = false;
+    });
   }
+}
 
   /// Check if transaction codes exist in transactions table
   Future<void> _checkTransactionExistence(List<ParsedMpesaMessage> messages) async {
@@ -539,7 +588,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                   IconButton(
                     icon: const Icon(Icons.refresh),
                     color: Colors.orange.shade700,
-                    onPressed: _loadMessages,
+                    onPressed: _getStartAfreshTime, // Refresh from start
                     tooltip: 'Refresh',
                   ),
                 ],
@@ -759,7 +808,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
 
     return RefreshIndicator(
-      onRefresh: _loadMessages,
+      onRefresh: () => _getStartAfreshTime(), // Refresh from start
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _filteredPendingMessages.length,
@@ -770,6 +819,9 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       ),
     );
   }
+
+  // ... rest of the widget code remains the same (buildPendingCard, discardTransaction, etc.)
+  // I'll include the key methods that reference transactions
 
   Widget _buildPendingCard(ParsedMpesaMessage message) {
     return Card(
@@ -1027,7 +1079,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       }
 
       // Create a "discarded" marker transaction with zero amount
-      // This marks the transaction code as processed without adding it to reports
       await db.execute('''
         INSERT INTO transactions(
           id, user_id, title, amount, type, category_id, date, 
@@ -1037,9 +1088,9 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         uuid.v4(),
         userId,
         '[DISCARDED] ${message.displayName}',
-        0.0, // Zero amount so it doesn't affect reports
+        0.0,
         message.isDebit ? 'expense' : 'income',
-        'discarded', // Special category marker
+        'discarded',
         message.transactionDate.toIso8601String(),
         'Discarded MPESA transaction\nCode: ${message.transactionCode}\nOriginal Amount: KES ${NumberFormat('#,##0.00').format(message.amount)}',
         DateTime.now().toIso8601String(),
@@ -1067,7 +1118,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         );
 
         // Refresh the list
-        await _loadMessages();
+        await _getStartAfreshTime();
       }
     } catch (e) {
       print('Error discarding transaction: $e');
@@ -1109,7 +1160,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       ),
     ).then((_) {
       // Refresh messages after adding transaction
-      _loadMessages();
+      _getStartAfreshTime();
     });
   }
 
