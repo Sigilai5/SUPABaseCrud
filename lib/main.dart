@@ -1,6 +1,5 @@
-// lib/main.dart - Updated with automatic pending transaction check
+// lib/main.dart - Updated with MPESA SMS navigation
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'powersync.dart';
@@ -9,12 +8,10 @@ import 'services/location_service.dart';
 import 'services/theme_service.dart';
 import 'widgets/auth/login_page.dart';
 import 'widgets/transactions/transaction_list.dart';
-import 'widgets/transactions/transaction_form.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
-import 'widgets/sms/sms_messages_page.dart';
-import 'models/transaction.dart';
+import 'widgets/sms/sms_messages_page.dart';  // ✓ ADDED
 
 // Global navigator key for notification navigation
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -73,7 +70,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  bool _hasCheckedPending = false; // Track if we've checked for pending transactions
 
   final List<String> _pageTitles = [
     'Transactions',
@@ -91,101 +87,6 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _checkPermissions();
-    _checkAndProcessPendingTransactions(); // Check for pending transactions on startup
-  }
-
-  Future<void> _checkAndProcessPendingTransactions() async {
-    // Avoid checking multiple times
-    if (_hasCheckedPending) return;
-    _hasCheckedPending = true;
-
-    // Wait a bit for the UI to settle
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    try {
-      print('=== Checking for pending transactions on app startup ===');
-      
-      // Get pending transactions from SharedPreferences
-      final List<dynamic>? pendingList = await MpesaService.getPendingTransactionsFromSharedPrefs();
-      
-      if (pendingList != null && pendingList.isNotEmpty && mounted) {
-        print('Found ${pendingList.length} pending transaction(s) - opening form for first one');
-        
-        // Get the first pending transaction
-        final firstPending = Map<String, dynamic>.from(pendingList.first);
-        
-        // Extract transaction details
-        final title = firstPending['title'] as String? ?? 'Unknown';
-        final amount = (firstPending['amount'] as num?)?.toDouble() ?? 0.0;
-        final type = firstPending['type'] as String? ?? 'expense';
-        final transactionCode = firstPending['transactionCode'] as String? ?? '';
-        final notes = firstPending['notes'] as String?;
-        
-        print('Opening transaction form for: $title - KES $amount');
-        
-        // Navigate to transaction form with the pending transaction data
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => TransactionForm(
-              initialTitle: title,
-              initialAmount: amount,
-              initialType: type == 'income' ? TransactionType.income : TransactionType.expense,
-              initialNotes: notes,
-              initialMpesaCode: transactionCode,
-            ),
-          ),
-        );
-        
-        // After returning from transaction form, remove this transaction from pending
-        if (transactionCode.isNotEmpty) {
-          try {
-            const platform = MethodChannel('com.example.crud/mpesa');
-            await platform.invokeMethod('removePendingTransaction', {
-              'transactionCode': transactionCode,
-            });
-            print('✓ Removed pending transaction: $transactionCode');
-          } catch (e) {
-            print('Error removing pending transaction: $e');
-          }
-        }
-        
-        // Check if there are more pending transactions and show a snackbar
-        final remainingList = await MpesaService.getPendingTransactionsFromSharedPrefs();
-        if (mounted && remainingList != null && remainingList.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.info_outline, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text('${remainingList.length} more pending ${remainingList.length == 1 ? 'transaction' : 'transactions'}'),
-                  ),
-                ],
-              ),
-              backgroundColor: Colors.orange,
-              duration: const Duration(seconds: 4),
-              action: SnackBarAction(
-                label: 'View All',
-                textColor: Colors.white,
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const SmsMessagesPage(),
-                    ),
-                  );
-                },
-              ),
-            ),
-          );
-        }
-      } else {
-        print('No pending transactions found in SharedPreferences');
-      }
-    } catch (e, stackTrace) {
-      print('✗ Error checking pending transactions: $e');
-      print('Stack trace: $stackTrace');
-    }
   }
 
   Future<void> _checkPermissions() async {
@@ -359,7 +260,7 @@ class AppDrawer extends StatelessWidget {
             
             const Divider(),
             
-            // MPESA SMS Button
+            // ✓ ADDED THIS - MPESA SMS Button
             ListTile(
               leading: const Icon(Icons.message, color: Colors.green),
               title: const Text('MPESA SMS'),
@@ -478,14 +379,14 @@ class AppDrawer extends StatelessWidget {
               ),
               SizedBox(height: 8),
               Text('• Automatic MPESA SMS detection\n'
-                  '• Instant notifications with Add/Dismiss buttons\n'
-                  '• Location tagging for transactions\n'
-                  '• Light & Dark themes\n'
-                  '• Real-time sync across devices\n'
-                  '• Detailed spending reports\n'
-                  '• Category management\n'
-                  '• Offline support\n'
-                  '• View all MPESA SMS messages'),
+                '• Instant notifications with Add/Dismiss buttons\n'
+                '• Location tagging for transactions\n'
+                '• Light & Dark mode themes\n'
+                '• Real-time sync across devices\n'
+                '• Detailed spending reports\n'
+                '• Category management\n'
+                '• Offline support\n'
+                '• View all MPESA SMS messages'),
               SizedBox(height: 16),
               Text(
                 'Need more help?',
