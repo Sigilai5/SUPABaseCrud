@@ -1,4 +1,4 @@
-// lib/widgets/settings/settings_page.dart - Updated without Pending MPESA references
+// lib/widgets/settings/settings_page.dart - FIXED Start Afresh functionality
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,6 +7,7 @@ import '../../services/mpesa_service.dart';
 import '../../services/location_service.dart';
 import '../../services/theme_service.dart';
 import '../../powersync.dart';
+import '../../models/start_afresh.dart';  // ✓ ADDED THIS IMPORT
 import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
 
@@ -404,7 +405,7 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('All transactions deleted successfully!'),
+            content: Text('All transactions deleted successfully! Tracking reset to now.'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 3),
           ),
@@ -425,15 +426,25 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  // ✓ FIXED METHOD - Now resets start_afresh time after deleting transactions
   Future<void> _deleteAllTransactions() async {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
 
+    print('=== Starting Start Afresh Process ===');
+    
+    // Delete all transactions
     await db.execute('''
       DELETE FROM transactions WHERE user_id = ?
     ''', [userId]);
 
-    print('All transactions deleted for user: $userId');
+    print('✓ All transactions deleted for user: $userId');
+
+    // Reset the start_afresh time to current time
+    final resetRecord = await StartAfresh.resetStartTime();
+    print('✓ Start afresh time reset to: ${resetRecord.startTime}');
+    print('✓ Timezone: ${resetRecord.startTime.timeZoneName}');
+    print('=== Start Afresh Process Complete ===');
   }
 
   Future<void> _requestSmsPermission() async {

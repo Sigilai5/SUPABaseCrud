@@ -1,4 +1,4 @@
-// lib/models/start_afresh.dart
+// lib/models/start_afresh.dart - FIXED VERSION
 import 'package:powersync/sqlite3_common.dart' as sqlite;
 import '../powersync.dart';
 import 'schema.dart';
@@ -70,6 +70,7 @@ class StartAfresh {
 
   /// Update the start time to now - this is the "Start Afresh" action
   /// This effectively resets the user's tracking period
+  /// ✓ FIXED: Now uses UPSERT logic to handle missing records
   static Future<StartAfresh> resetStartTime() async {
     final userId = getUserId();
     if (userId == null) throw Exception('User not logged in');
@@ -78,20 +79,50 @@ class StartAfresh {
     final now = DateTime.now();
     final nowString = now.toIso8601String();
     
-    print('Resetting start_afresh to local time: $now (${now.timeZoneName})');
+    print('=== Resetting Start Afresh ===');
+    print('User ID: $userId');
+    print('New start time: $now (${now.timeZoneName})');
     
-    // Update existing record
-    await db.execute('''
-      UPDATE $startAfreshTable 
-      SET start_time = ?, updated_at = ?
-      WHERE user_id = ?
-    ''', [nowString, nowString, userId]);
+    // ✓ FIXED: Check if record exists first
+    final existingRecord = await getForCurrentUser();
+    
+    if (existingRecord != null) {
+      // Update existing record
+      print('Updating existing start_afresh record...');
+      await db.execute('''
+        UPDATE $startAfreshTable 
+        SET start_time = ?, updated_at = ?
+        WHERE user_id = ?
+      ''', [nowString, nowString, userId]);
+      
+      print('✓ Updated existing record');
+    } else {
+      // Create new record if it doesn't exist
+      print('No existing record found, creating new one...');
+      await db.execute('''
+        INSERT INTO $startAfreshTable(
+          id, user_id, start_time, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?)
+      ''', [
+        uuid.v4(),
+        userId,
+        nowString,
+        nowString,
+        nowString,
+      ]);
+      
+      print('✓ Created new record');
+    }
     
     // Return the updated record
     final record = await getForCurrentUser();
     if (record == null) {
-      throw Exception('Failed to update start afresh record');
+      throw Exception('Failed to create/update start afresh record');
     }
+    
+    print('✓ Start afresh reset complete');
+    print('  New start time: ${record.startTime}');
+    print('  Timezone: ${record.startTime.timeZoneName}');
     
     return record;
   }
