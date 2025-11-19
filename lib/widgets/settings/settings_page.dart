@@ -7,9 +7,9 @@ import '../../services/mpesa_service.dart';
 import '../../services/location_service.dart';
 import '../../services/theme_service.dart';
 import '../../powersync.dart';
-import '../../models/start_afresh.dart';  // ✓ ADDED THIS IMPORT
 import '../auth/login_page.dart';
 import '../common/status_app_bar.dart';
+import '../../services/user_preferences.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -426,26 +426,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // ✓ FIXED METHOD - Now resets start_afresh time after deleting transactions
   Future<void> _deleteAllTransactions() async {
-    final userId = getUserId();
-    if (userId == null) throw Exception('User not logged in');
+  final userId = getUserId();
+  if (userId == null) throw Exception('User not logged in');
 
-    print('=== Starting Start Afresh Process ===');
-    
-    // Delete all transactions
-    await db.execute('''
-      DELETE FROM transactions WHERE user_id = ?
-    ''', [userId]);
+  print('=== Starting Start Afresh Process ===');
+  
+  // Delete all transactions
+  await db.execute('''
+    DELETE FROM transactions WHERE user_id = ?
+  ''', [userId]);
 
-    print('✓ All transactions deleted for user: $userId');
+  print('✓ All transactions deleted for user: $userId');
 
-    // Reset the start_afresh time to current time
-    final resetRecord = await StartAfresh.resetStartTime();
-    print('✓ Start afresh time reset to: ${resetRecord.startTime}');
-    print('✓ Timezone: ${resetRecord.startTime.timeZoneName}');
-    print('=== Start Afresh Process Complete ===');
-  }
+  // Reset the tracking start time in SharedPreferences
+  await UserPreferences.setFirstTransactionTime(DateTime.now());
+  print('✓ Tracking start time reset to: ${DateTime.now()}');
+  print('=== Start Afresh Process Complete ===');
+}
 
   Future<void> _requestSmsPermission() async {
     final granted = await MpesaService.requestSmsPermission();

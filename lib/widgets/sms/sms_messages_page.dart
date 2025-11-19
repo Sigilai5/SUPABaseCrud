@@ -10,7 +10,7 @@ import '../common/status_app_bar.dart';
 import '../../powersync.dart';
 import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
-import '../../models/start_afresh.dart';
+import '../../services/user_preferences.dart';
 
 // Supported MPESA transaction types
 enum SupportedMpesaType {
@@ -107,67 +107,46 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
 
   // ✓ FIXED METHOD - Properly retrieves and validates start_afresh time
   Future<void> _getStartAfreshTime() async {
-    try {
-      print('=== Getting Start Afresh Time ===');
-      print('Current time: ${DateTime.now()}');
-      print('Current time (local): ${DateTime.now().toLocal()}');
-      print('Current time (UTC): ${DateTime.now().toUtc()}');
+  try {
+    print('=== Getting Tracking Start Time ===');
+    print('Current time: ${DateTime.now()}');
+    
+    // Get tracking start time from SharedPreferences
+    final startTime = await UserPreferences.getFirstTransactionTime();
+    
+    if (startTime != null) {
+      setState(() {
+        _userCreatedAt = startTime;
+      });
       
-      // Ensure start_afresh record exists first
-      await StartAfresh.ensureExists();
-      print('✓ Ensured start_afresh record exists');
+      print('✓ Tracking start time retrieved: $_userCreatedAt');
+      print('  As stored: $startTime');
+      print('  Local time: ${_userCreatedAt?.toLocal()}');
       
-      // Get start_afresh time from database
-      final startTime = await StartAfresh.getStartTime();
-      
-      if (startTime != null) {
-        setState(() {
-          _userCreatedAt = startTime;
-        });
-        
-        // Detailed debugging
-        print('✓ Start Afresh time retrieved: $_userCreatedAt');
-        print('  As stored: $startTime');
-        print('  Local time: ${_userCreatedAt?.toLocal()}');
-        print('  UTC time: ${_userCreatedAt?.toUtc()}');
-        print('  Timezone: ${_userCreatedAt?.timeZoneName}');
-        print('  Timezone offset: ${_userCreatedAt?.timeZoneOffset}');
-        print('  Is UTC: ${_userCreatedAt?.isUtc}');
-        
-        final now = DateTime.now();
-        print('  Is in the past: ${_userCreatedAt!.isBefore(now)}');
-        print('  Is in the future: ${_userCreatedAt!.isAfter(now)}');
-        print('  Days difference: ${now.difference(_userCreatedAt!).inDays}');
-        print('  Hours difference: ${now.difference(_userCreatedAt!).inHours}');
-        print('  Minutes difference: ${now.difference(_userCreatedAt!).inMinutes}');
-        
-        // Validate that the time makes sense
-        if (_userCreatedAt!.isAfter(now)) {
-          print('⚠ WARNING: Start time is in the future! This shouldn\'t happen.');
-          print('  Using current time instead');
-          setState(() {
-            _userCreatedAt = now;
-          });
-        }
-      } else {
-        // This shouldn't happen after ensureExists, but handle it anyway
-        print('⚠ WARNING: No start_afresh time available after ensureExists');
-        setState(() {
-          _userCreatedAt = DateTime.now();
-        });
-        print('✓ Using current time as fallback: $_userCreatedAt');
-      }
-      
-      await _checkPermissionAndLoadMessages();
-    } catch (e, stackTrace) {
-      print('✗ Error getting start_afresh time: $e');
-      print('Stack trace: $stackTrace');
+      final now = DateTime.now();
+      print('  Days difference: ${now.difference(_userCreatedAt!).inDays}');
+    } else {
+      // No tracking start time yet - use current time
+      print('No tracking start time found, using current time');
       setState(() {
         _userCreatedAt = DateTime.now();
       });
-      await _checkPermissionAndLoadMessages();
+      
+      // Save this as the first tracking time
+      await UserPreferences.setFirstTransactionTime(_userCreatedAt!);
+      print('✓ Set initial tracking start time: $_userCreatedAt');
     }
+    
+    await _checkPermissionAndLoadMessages();
+  } catch (e, stackTrace) {
+    print('✗ Error getting tracking start time: $e');
+    print('Stack trace: $stackTrace');
+    setState(() {
+      _userCreatedAt = DateTime.now();
+    });
+    await _checkPermissionAndLoadMessages();
   }
+}
 
   Future<void> _checkPermissionAndLoadMessages() async {
     setState(() {
