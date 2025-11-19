@@ -1,5 +1,5 @@
 // lib/widgets/sms/sms_messages_page.dart
-// FIXED VERSION - Properly handles start_afresh time from database
+// FIXED VERSION - Properly filters out discarded transactions
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,14 +10,15 @@ import '../common/status_app_bar.dart';
 import '../../powersync.dart';
 import '../transactions/transaction_form.dart';
 import '../../models/transaction.dart';
+import '../../models/discarded_mpesa.dart';
 import '../../services/user_preferences.dart';
 
 // Supported MPESA transaction types
 enum SupportedMpesaType {
-  till,      // Lipa Na MPESA Till
-  send,      // Send Money to phone number
-  received,  // Money Received
-  paybill,   // Paybill payment
+  till,
+  send,
+  received,
+  paybill,
 }
 
 class ParsedMpesaMessage {
@@ -91,7 +92,6 @@ class SmsMessagesPage extends StatefulWidget {
 class _SmsMessagesPageState extends State<SmsMessagesPage> {
   List<ParsedMpesaMessage> _allMessages = [];
   List<ParsedMpesaMessage> _pendingMessages = [];
-  Map<String, bool> _transactionExists = {};
   bool _isLoading = true;
   bool _hasPermission = false;
   String? _error;
@@ -105,48 +105,35 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     _getStartAfreshTime();
   }
 
-  // ✓ FIXED METHOD - Properly retrieves and validates start_afresh time
   Future<void> _getStartAfreshTime() async {
-  try {
-    print('=== Getting Tracking Start Time ===');
-    print('Current time: ${DateTime.now()}');
-    
-    // Get tracking start time from SharedPreferences
-    final startTime = await UserPreferences.getFirstTransactionTime();
-    
-    if (startTime != null) {
-      setState(() {
-        _userCreatedAt = startTime;
-      });
+    try {
+      print('=== Getting Tracking Start Time ===');
       
-      print('✓ Tracking start time retrieved: $_userCreatedAt');
-      print('  As stored: $startTime');
-      print('  Local time: ${_userCreatedAt?.toLocal()}');
+      final startTime = await UserPreferences.getFirstTransactionTime();
       
-      final now = DateTime.now();
-      print('  Days difference: ${now.difference(_userCreatedAt!).inDays}');
-    } else {
-      // No tracking start time yet - use current time
-      print('No tracking start time found, using current time');
+      if (startTime != null) {
+        setState(() {
+          _userCreatedAt = startTime;
+        });
+        print('✓ Tracking start time: $_userCreatedAt');
+      } else {
+        setState(() {
+          _userCreatedAt = DateTime.now();
+        });
+        await UserPreferences.setFirstTransactionTime(_userCreatedAt!);
+        print('✓ Set initial tracking time: $_userCreatedAt');
+      }
+      
+      await _checkPermissionAndLoadMessages();
+    } catch (e, stackTrace) {
+      print('✗ Error getting tracking start time: $e');
+      print('Stack trace: $stackTrace');
       setState(() {
         _userCreatedAt = DateTime.now();
       });
-      
-      // Save this as the first tracking time
-      await UserPreferences.setFirstTransactionTime(_userCreatedAt!);
-      print('✓ Set initial tracking start time: $_userCreatedAt');
+      await _checkPermissionAndLoadMessages();
     }
-    
-    await _checkPermissionAndLoadMessages();
-  } catch (e, stackTrace) {
-    print('✗ Error getting tracking start time: $e');
-    print('Stack trace: $stackTrace');
-    setState(() {
-      _userCreatedAt = DateTime.now();
-    });
-    await _checkPermissionAndLoadMessages();
   }
-}
 
   Future<void> _checkPermissionAndLoadMessages() async {
     setState(() {
@@ -184,34 +171,21 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       if (mounted) {
         _showOpenSettingsDialog();
       }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('SMS permission denied'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     }
   }
 
-  /// Parse MPESA SMS - returns null for unsupported types or parsing errors
   ParsedMpesaMessage? _parseMpesaMessage(String message) {
     try {
       final cleanMessage = message.replaceAll(RegExp(r'\s+'), ' ').trim();
       
-      // Extract transaction code
       final codeMatch = RegExp(r'^([A-Z0-9]{10})').firstMatch(cleanMessage);
       if (codeMatch == null) return null;
       final transactionCode = codeMatch.group(1)!;
 
-      // Extract amount
       final amountMatch = RegExp(r'Ksh([\d,]+\.?\d*)').firstMatch(cleanMessage);
       if (amountMatch == null) return null;
       final amount = double.parse(amountMatch.group(1)!.replaceAll(',', ''));
 
-      // Extract date and time
       final dateMatch = RegExp(r'on (\d{1,2}/\d{1,2}/\d{2}) at (\d{1,2}:\d{2} [AP]M)').firstMatch(cleanMessage);
       DateTime transactionDate = DateTime.now();
       
@@ -240,14 +214,12 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         }
       }
 
-      // Determine transaction type - ONLY supported types
       SupportedMpesaType? type;
       String counterpartyName;
       String? counterpartyNumber;
       bool isDebit;
 
       if (cleanMessage.contains('You have received')) {
-        // RECEIVED - INCOME
         type = SupportedMpesaType.received;
         final nameMatch = RegExp(r'from ([A-Z\s]+) (\d+)').firstMatch(cleanMessage);
         counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
@@ -255,12 +227,10 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = false;
 
       } else if (cleanMessage.contains('sent to') && !cleanMessage.contains('paid to')) {
-        // Skip Pochi transactions
         if (cleanMessage.contains('Sign up for Lipa Na M-PESA Till')) {
           return null;
         }
         
-        // SEND MONEY
         type = SupportedMpesaType.send;
         final nameMatch = RegExp(r'sent to ([A-Za-z\s]+) (\d+)').firstMatch(cleanMessage);
         if (nameMatch != null) {
@@ -274,7 +244,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = true;
 
       } else if (cleanMessage.contains('paid to')) {
-        // TILL
         type = SupportedMpesaType.till;
         final nameMatch = RegExp(r'paid to ([A-Z\s.&]+?)\.').firstMatch(cleanMessage);
         counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
@@ -282,7 +251,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = true;
 
       } else if (cleanMessage.contains('for account')) {
-        // PAYBILL
         type = SupportedMpesaType.paybill;
         final nameMatch = RegExp(r'sent to ([A-Za-z\s]+)\.?\s+for account').firstMatch(cleanMessage);
         counterpartyName = nameMatch?.group(1)?.trim() ?? 'Unknown';
@@ -292,7 +260,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         isDebit = true;
 
       } else {
-        // Unsupported type
         return null;
       }
 
@@ -314,148 +281,139 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
   }
 
   Future<void> _loadMessages() async {
-  if (_userCreatedAt == null) {
-    print('Start Afresh time not available, cannot load messages');
-    setState(() {
-      _error = 'Could not determine tracking start time';
-      _isLoading = false;
-    });
-    return;
-  }
+    if (_userCreatedAt == null) {
+      setState(() {
+        _error = 'Could not determine tracking start time';
+        _isLoading = false;
+      });
+      return;
+    }
 
-  setState(() => _isLoading = true);
+    setState(() => _isLoading = true);
 
-  try {
-    final SmsQuery query = SmsQuery();
-    
-    print('=== Loading SMS Messages ===');
-    print('Tracking started: ${_userCreatedAt!.toIso8601String()}');
-    print('Tracking started (local): ${_userCreatedAt!.toLocal()}');
-    print('Tracking started (formatted): ${DateFormat('MMM dd, yyyy h:mm:ss a').format(_userCreatedAt!)}');
-    
-    final allMessages = await query.querySms(
-      kinds: [SmsQueryKind.inbox],
-      count: 1000,
-    );
+    try {
+      final SmsQuery query = SmsQuery();
+      
+      print('=== Loading SMS Messages ===');
+      print('Tracking started: ${DateFormat('MMM dd, yyyy h:mm:ss a').format(_userCreatedAt!)}');
+      
+      final allMessages = await query.querySms(
+        kinds: [SmsQueryKind.inbox],
+        count: 1000,
+      );
 
-    print('Total SMS messages found: ${allMessages.length}');
+      print('Total SMS: ${allMessages.length}');
 
-    // Filter for MPESA messages after start_afresh time and parse them
-    List<ParsedMpesaMessage> parsedMessages = [];
-    int mpesaCount = 0;
-    int afterStartCount = 0;
-    
-    // FIX: Normalize both dates to the same timezone for accurate comparison
-    final normalizedStartTime = _userCreatedAt!.toLocal();
-    
-    for (var message in allMessages) {
-      final sender = message.address?.toUpperCase() ?? '';
-      final body = message.body ?? '';
-      final messageDate = message.date;
+      List<ParsedMpesaMessage> parsedMessages = [];
+      int mpesaCount = 0;
       
-      // Check if MPESA message
-      final isMpesa = sender.contains('MPESA') || 
-                      sender.contains('M-PESA') ||
-                      body.toUpperCase().contains('MPESA') ||
-                      body.toUpperCase().contains('M-PESA') ||
-                      sender.startsWith('MPESA');
+      final normalizedStartTime = _userCreatedAt!.toLocal();
       
-      if (!isMpesa) continue;
-      mpesaCount++;
-      
-      // Check if after start_afresh time - FIXED COMPARISON
-      if (messageDate == null) continue;
-      
-      // FIX: Normalize message date to local timezone and compare
-      final normalizedMessageDate = messageDate.toLocal();
-      final isAfterStart = normalizedMessageDate.isAfter(normalizedStartTime);
-      
-      // DEBUG: Log some comparisons for troubleshooting
-      if (mpesaCount <= 5) { // Log first 5 MPESA messages for debugging
-        print('MPESA Message ${mpesaCount}:');
-        print('  Message date: $normalizedMessageDate');
-        print('  Start date:   $normalizedStartTime');
-        print('  Is after start: $isAfterStart');
-        print('  Difference: ${normalizedMessageDate.difference(normalizedStartTime).inHours} hours');
-      }
-      
-      if (isAfterStart) {
-        afterStartCount++;
+      for (var message in allMessages) {
+        final sender = message.address?.toUpperCase() ?? '';
+        final body = message.body ?? '';
+        final messageDate = message.date;
         
-        // Parse and filter for supported types only
+        final isMpesa = sender.contains('MPESA') || 
+                        sender.contains('M-PESA') ||
+                        body.toUpperCase().contains('MPESA') ||
+                        body.toUpperCase().contains('M-PESA') ||
+                        sender.startsWith('MPESA');
+        
+        if (!isMpesa) continue;
+        mpesaCount++;
+        
+        if (messageDate == null) continue;
+        
+        final normalizedMessageDate = messageDate.toLocal();
+        if (!normalizedMessageDate.isAfter(normalizedStartTime)) continue;
+        
         final parsed = _parseMpesaMessage(body);
         if (parsed != null) {
           parsedMessages.add(parsed);
         }
       }
+
+      parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+
+      print('MPESA messages: $mpesaCount');
+      print('Parsed: ${parsedMessages.length}');
+
+      // ✅ CRITICAL FIX: Filter out recorded and discarded transactions
+      final pending = await _filterPendingTransactions(parsedMessages);
+
+      setState(() {
+        _allMessages = parsedMessages;
+        _pendingMessages = pending;
+        _isLoading = false;
+      });
+
+      print('=== Summary ===');
+      print('Total MPESA: ${parsedMessages.length}');
+      print('Pending: ${pending.length}');
+      print('Filtered out: ${parsedMessages.length - pending.length}');
+
+    } catch (e, stackTrace) {
+      print('✗ Error loading messages: $e');
+      print('Stack trace: $stackTrace');
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
-
-    // Sort by date (newest first)
-    parsedMessages.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-
-    print('MPESA messages found: $mpesaCount');
-    print('MPESA messages after start time: $afterStartCount');
-    print('Parsed (supported types): ${parsedMessages.length}');
-
-    // Check which transactions exist in database
-    await _checkTransactionExistence(parsedMessages);
-
-    // Filter to get only pending transactions
-    final pending = parsedMessages.where((msg) => 
-      !(_transactionExists[msg.transactionCode] ?? false)
-    ).toList();
-
-    setState(() {
-      _allMessages = parsedMessages;
-      _pendingMessages = pending;
-      _isLoading = false;
-    });
-
-    print('=== Summary ===');
-    print('Pending (unrecorded) transactions: ${pending.length}');
-    print('Already recorded transactions: ${parsedMessages.length - pending.length}');
-
-  } catch (e, stackTrace) {
-    print('✗ Error loading messages: $e');
-    print('Stack trace: $stackTrace');
-    setState(() {
-      _error = e.toString();
-      _isLoading = false;
-    });
   }
-}
 
-  /// Check if transaction codes exist in transactions table
-  Future<void> _checkTransactionExistence(List<ParsedMpesaMessage> messages) async {
-    final Map<String, bool> existenceMap = {};
+  /// ✅ CRITICAL FIX: Properly filter out both recorded and discarded transactions
+  Future<List<ParsedMpesaMessage>> _filterPendingTransactions(
+    List<ParsedMpesaMessage> messages,
+  ) async {
     final userId = getUserId();
-    
     if (userId == null) {
       print('User not logged in');
-      return;
+      return messages;
     }
+
+    final List<ParsedMpesaMessage> pending = [];
+    
+    print('=== Filtering ${messages.length} messages ===');
     
     for (var message in messages) {
       try {
-        final result = await db.getOptional('''
+        // Check if recorded in transactions table
+        final recordedResult = await db.getOptional('''
           SELECT COUNT(*) as count 
           FROM transactions 
           WHERE user_id = ? AND mpesa_code = ?
         ''', [userId, message.transactionCode]);
         
-        final count = (result?['count'] as int?) ?? 0;
-        final exists = count > 0;
+        final isRecorded = (recordedResult?['count'] as int? ?? 0) > 0;
         
-        existenceMap[message.transactionCode] = exists;
+        if (isRecorded) {
+          print('${message.transactionCode}: RECORDED - skipping');
+          continue;
+        }
+
+        // ✅ Check if discarded
+        final isDiscarded = await DiscardedMpesa.isDiscarded(message.transactionCode);
+        
+        if (isDiscarded) {
+          print('${message.transactionCode}: DISCARDED - skipping');
+          continue;
+        }
+
+        // Not recorded and not discarded = pending
+        print('${message.transactionCode}: PENDING - adding to list');
+        pending.add(message);
+        
       } catch (e) {
-        print('Error checking transaction ${message.transactionCode}: $e');
-        existenceMap[message.transactionCode] = false;
+        print('Error checking ${message.transactionCode}: $e');
+        // On error, assume it's pending
+        pending.add(message);
       }
     }
     
-    setState(() {
-      _transactionExists = existenceMap;
-    });
+    print('Filtered to ${pending.length} pending transactions');
+    return pending;
   }
 
   void _showOpenSettingsDialog() {
@@ -471,7 +429,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         ),
         content: const Text(
           'SMS permission was permanently denied. '
-          'Please enable it in your device settings to view pending transactions.\n\n'
+          'Please enable it in your device settings.\n\n'
           'Settings > Apps > Expense Tracker > Permissions > SMS',
         ),
         actions: [
@@ -516,7 +474,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       appBar: const StatusAppBar(title: Text('Pending MPESA Transactions')),
       body: Column(
         children: [
-          // Pending count banner
           if (_hasPermission && !_isLoading && _pendingMessages.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -555,7 +512,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Tap any transaction to add it to your records',
+                          'Tap any transaction to add it',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.orange.shade700,
@@ -567,7 +524,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                   IconButton(
                     icon: const Icon(Icons.refresh),
                     color: Colors.orange.shade700,
-                    onPressed: _getStartAfreshTime, // Refresh from start
+                    onPressed: _getStartAfreshTime,
                     tooltip: 'Refresh',
                   ),
                 ],
@@ -575,7 +532,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
           ],
 
-          // Info banner showing tracking start time
           if (_hasPermission && !_isLoading && _userCreatedAt != null) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -586,7 +542,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Showing MPESA messages since ${DateFormat('MMM dd, yyyy h:mm a').format(_userCreatedAt!)}',
+                      'Showing MPESA since ${DateFormat('MMM dd, yyyy h:mm a').format(_userCreatedAt!)}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.blue.shade700,
@@ -598,7 +554,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
           ],
 
-          // Search bar
           if (_hasPermission && _pendingMessages.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(16),
@@ -639,7 +594,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
           ],
 
-          // Content
           Expanded(
             child: _buildContent(),
           ),
@@ -709,7 +663,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               ),
               const SizedBox(height: 12),
               Text(
-                'To detect pending MPESA transactions from SMS, please grant SMS permission.',
+                'To detect pending MPESA transactions, please grant SMS permission.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -762,7 +716,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
                 _filterQuery.isEmpty
-                    ? 'All your MPESA transactions have been recorded'
+                    ? 'All MPESA transactions recorded or discarded'
                     : 'No pending transactions match your search',
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -787,7 +741,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
 
     return RefreshIndicator(
-      onRefresh: () => _getStartAfreshTime(), // Refresh from start
+      onRefresh: () => _getStartAfreshTime(),
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _filteredPendingMessages.length,
@@ -798,9 +752,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       ),
     );
   }
-
-  // ... rest of the widget code remains the same (buildPendingCard, discardTransaction, etc.)
-  // I'll include the key methods that reference transactions
 
   Widget _buildPendingCard(ParsedMpesaMessage message) {
     return Card(
@@ -896,7 +847,6 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               ),
             ),
             
-            // Action buttons row
             const SizedBox(height: 12),
             const Divider(height: 1),
             const SizedBox(height: 8),
@@ -1021,7 +971,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'This will mark it as processed without adding it to your transactions. This action cannot be undone.',
+              'This will be permanently marked as discarded.',
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.grey[600],
@@ -1050,32 +1000,29 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
+  /// ✅ FIXED: Properly discard and immediately refresh
   Future<void> _discardTransaction(ParsedMpesaMessage message) async {
     try {
-      final userId = getUserId();
-      if (userId == null) {
-        throw Exception('User not logged in');
-      }
+      print('=== Discarding Transaction ===');
+      print('Code: ${message.transactionCode}');
+      
+      // Save to discarded_mpesa table
+      await DiscardedMpesa.create(
+        transactionCode: message.transactionCode,
+        transactionType: message.type.name.toUpperCase(),
+        amount: message.amount,
+        counterpartyName: message.counterpartyName,
+        counterpartyNumber: message.counterpartyNumber,
+        transactionDate: message.transactionDate,
+        isDebit: message.isDebit,
+        rawMessage: message.rawMessage,
+        discardReason: 'User discarded from pending list',
+      );
 
-      // Create a "discarded" marker transaction with zero amount
-      await db.execute('''
-        INSERT INTO transactions(
-          id, user_id, title, amount, type, category_id, date, 
-          notes, created_at, updated_at, mpesa_code
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''', [
-        uuid.v4(),
-        userId,
-        '[DISCARDED] ${message.displayName}',
-        0.0,
-        message.isDebit ? 'expense' : 'income',
-        'discarded',
-        message.transactionDate.toIso8601String(),
-        'Discarded MPESA transaction\nCode: ${message.transactionCode}\nOriginal Amount: KES ${NumberFormat('#,##0.00').format(message.amount)}',
-        DateTime.now().toIso8601String(),
-        DateTime.now().toIso8601String(),
-        message.transactionCode,
-      ]);
+      print('✓ Transaction saved to discarded_mpesa table');
+
+      // ✅ Wait a bit for the database write to complete
+      await Future.delayed(const Duration(milliseconds: 300));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1092,19 +1039,22 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
               ],
             ),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 2),
           ),
         );
 
-        // Refresh the list
-        await _getStartAfreshTime();
+        // ✅ Immediately reload messages to update the UI
+        print('Reloading messages after discard...');
+        await _loadMessages();
       }
-    } catch (e) {
-      print('Error discarding transaction: $e');
+    } catch (e, stackTrace) {
+      print('✗ Error discarding transaction: $e');
+      print('Stack trace: $stackTrace');
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error discarding transaction: $e'),
+            content: Text('Error discarding: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
           ),
@@ -1138,8 +1088,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         ),
       ),
     ).then((_) {
-      // Refresh messages after adding transaction
-      _getStartAfreshTime();
+      _loadMessages();
     });
   }
 

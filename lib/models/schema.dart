@@ -5,6 +5,7 @@ const transactionsTable = 'transactions';
 const categoriesTable = 'categories';
 const mpesaTransactionsTable = 'mpesa_transactions';
 const startAfreshTable = 'start_afresh';
+const discardedMpesaTable = 'discarded_mpesa';  // ✓ NEW TABLE
 
 Schema schema = Schema([
   // Transactions table for income and expenses
@@ -68,4 +69,24 @@ Schema schema = Schema([
     Index('mpesa_linked', [IndexedColumn('linked_transaction_id')]),
   ]),
 
+  // ✓ NEW TABLE - Discarded MPESA Transactions
+  // Stores MPESA transactions that user has explicitly discarded
+  // This prevents them from showing up in pending list again
+  const Table(discardedMpesaTable, [
+    Column.text('user_id'),                 // Owner
+    Column.text('transaction_code'),        // MPESA code (unique identifier)
+    Column.text('transaction_type'),        // Type of transaction
+    Column.real('amount'),                  // Transaction amount
+    Column.text('counterparty_name'),       // Who sent/received
+    Column.text('counterparty_number'),     // Phone/account number
+    Column.text('transaction_date'),        // When transaction occurred
+    Column.integer('is_debit'),             // 1 = expense, 0 = income
+    Column.text('raw_message'),             // Original SMS
+    Column.text('discarded_at'),            // When user discarded it
+    Column.text('discard_reason'),          // Optional reason
+  ], indexes: [
+    Index('user_discarded', [IndexedColumn('user_id')]),
+    Index('discarded_code', [IndexedColumn('transaction_code')]),
+    Index('discarded_date', [IndexedColumn('discarded_at')]),
+  ]),
 ]);
