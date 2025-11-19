@@ -1,5 +1,5 @@
 // lib/widgets/sms/sms_messages_page.dart
-// FIXED VERSION - Properly filters out discarded transactions
+// FIXED VERSION - Properly cross-checks with discarded_mpesa table
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -363,56 +363,70 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     }
   }
 
-  /// ✅ CRITICAL FIX: Properly filter out both recorded and discarded transactions
+  /// ✅ CRITICAL FIX: Properly cross-check with discarded_mpesa table using transaction_code
   Future<List<ParsedMpesaMessage>> _filterPendingTransactions(
     List<ParsedMpesaMessage> messages,
   ) async {
     final userId = getUserId();
     if (userId == null) {
-      print('User not logged in');
+      print('⚠ User not logged in - cannot filter transactions');
       return messages;
     }
 
     final List<ParsedMpesaMessage> pending = [];
     
     print('=== Filtering ${messages.length} messages ===');
+    print('User ID: $userId');
     
     for (var message in messages) {
       try {
-        // Check if recorded in transactions table
+        final code = message.transactionCode;
+        
+        // ✅ STEP 1: Check if recorded in transactions table
         final recordedResult = await db.getOptional('''
           SELECT COUNT(*) as count 
           FROM transactions 
           WHERE user_id = ? AND mpesa_code = ?
-        ''', [userId, message.transactionCode]);
+        ''', [userId, code]);
         
-        final isRecorded = (recordedResult?['count'] as int? ?? 0) > 0;
+        final recordedCount = (recordedResult?['count'] as int? ?? 0);
         
-        if (isRecorded) {
-          print('${message.transactionCode}: RECORDED - skipping');
+        if (recordedCount > 0) {
+          print('$code: ✓ RECORDED in transactions table (count: $recordedCount) - SKIPPING');
           continue;
         }
 
-        // ✅ Check if discarded
-        final isDiscarded = await DiscardedMpesa.isDiscarded(message.transactionCode);
+        // ✅ STEP 2: Check if discarded in discarded_mpesa table
+        final discardedResult = await db.getOptional('''
+          SELECT COUNT(*) as count 
+          FROM discarded_mpesa 
+          WHERE user_id = ? AND transaction_code = ?
+        ''', [userId, code]);
         
-        if (isDiscarded) {
-          print('${message.transactionCode}: DISCARDED - skipping');
+        final discardedCount = (discardedResult?['count'] as int? ?? 0);
+        
+        if (discardedCount > 0) {
+          print('$code: ✓ DISCARDED in discarded_mpesa table (count: $discardedCount) - SKIPPING');
           continue;
         }
 
-        // Not recorded and not discarded = pending
-        print('${message.transactionCode}: PENDING - adding to list');
+        // ✅ STEP 3: Not recorded and not discarded = pending
+        print('$code: ⏳ PENDING - adding to list');
         pending.add(message);
         
-      } catch (e) {
-        print('Error checking ${message.transactionCode}: $e');
-        // On error, assume it's pending
-        pending.add(message);
+      } catch (e, stackTrace) {
+        print('✗ Error checking ${message.transactionCode}: $e');
+        print('Stack trace: $stackTrace');
+        // On error, skip this transaction to be safe
+        print('${message.transactionCode}: ERROR - skipping for safety');
       }
     }
     
-    print('Filtered to ${pending.length} pending transactions');
+    print('=== Filtering Complete ===');
+    print('Total messages scanned: ${messages.length}');
+    print('Pending transactions: ${pending.length}');
+    print('Filtered out (recorded + discarded): ${messages.length - pending.length}');
+    
     return pending;
   }
 
@@ -971,7 +985,7 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'This will be permanently marked as discarded.',
+              'This will be permanently marked as discarded and won\'t appear again.',
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.grey[600],
@@ -1000,14 +1014,70 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
     );
   }
 
-  /// ✅ FIXED: Properly discard and immediately refresh
+  /// ✅ Debug helper: Check if transaction is in discarded_mpesa table
+  Future<void> _debugCheckDiscardedStatus(String transactionCode) async {
+    try {
+      final userId = getUserId();
+      if (userId == null) {
+        print('DEBUG: User not logged in');
+        return;
+      }
+      
+      print('=== DEBUG: Checking Discarded Status ===');
+      print('Transaction Code: $transactionCode');
+      print('User ID: $userId');
+      
+      final result = await db.getOptional('''
+        SELECT * FROM discarded_mpesa 
+        WHERE user_id = ? AND transaction_code = ?
+      ''', [userId, transactionCode]);
+      
+      if (result != null) {
+        print('✓ FOUND in discarded_mpesa table:');
+        print('  - ID: ${result['id']}');
+        print('  - Amount: ${result['amount']}');
+        print('  - Discarded At: ${result['discarded_at']}');
+        print('  - Reason: ${result['discard_reason']}');
+      } else {
+        print('✗ NOT FOUND in discarded_mpesa table');
+      }
+      
+      // Also check transactions table
+      final txResult = await db.getOptional('''
+        SELECT * FROM transactions 
+        WHERE user_id = ? AND mpesa_code = ?
+      ''', [userId, transactionCode]);
+      
+      if (txResult != null) {
+        print('✓ FOUND in transactions table:');
+        print('  - ID: ${txResult['id']}');
+        print('  - Title: ${txResult['title']}');
+        print('  - Amount: ${txResult['amount']}');
+      } else {
+        print('✗ NOT FOUND in transactions table');
+      }
+      
+      print('=== DEBUG: Check Complete ===');
+    } catch (e) {
+      print('DEBUG ERROR: $e');
+    }
+  }
+
+  /// ✅ FIXED: Properly discard and immediately refresh with better error handling
   Future<void> _discardTransaction(ParsedMpesaMessage message) async {
     try {
       print('=== Discarding Transaction ===');
       print('Code: ${message.transactionCode}');
+      print('User ID: ${getUserId()}');
+      
+      // Get user ID first
+      final userId = getUserId();
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
       
       // Save to discarded_mpesa table
-      await DiscardedMpesa.create(
+      final discarded = await DiscardedMpesa.create(
         transactionCode: message.transactionCode,
         transactionType: message.type.name.toUpperCase(),
         amount: message.amount,
@@ -1019,34 +1089,59 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
         discardReason: 'User discarded from pending list',
       );
 
-      print('✓ Transaction saved to discarded_mpesa table');
+      print('✓ Transaction saved to discarded_mpesa table with ID: ${discarded.id}');
 
-      // ✅ Wait a bit for the database write to complete
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Transaction discarded: ${message.transactionCode}',
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-
-        // ✅ Immediately reload messages to update the UI
-        print('Reloading messages after discard...');
-        await _loadMessages();
+      // ✅ Verify it was actually saved
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      await _debugCheckDiscardedStatus(message.transactionCode);
+      
+      final verifyResult = await db.getOptional('''
+        SELECT COUNT(*) as count 
+        FROM discarded_mpesa 
+        WHERE user_id = ? AND transaction_code = ?
+      ''', [userId, message.transactionCode]);
+      
+      final count = (verifyResult?['count'] as int? ?? 0);
+      print('✓ Verification: Found $count entry in discarded_mpesa table');
+      
+      if (count == 0) {
+        throw Exception('Transaction was not saved to discarded_mpesa table');
       }
+
+      if (!mounted) return;
+      
+      // ✅ Remove from current pending list immediately (optimistic update)
+      setState(() {
+        _pendingMessages.removeWhere((m) => m.transactionCode == message.transactionCode);
+      });
+      
+      print('✓ Removed from UI pending list');
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Transaction discarded: ${message.transactionCode}',
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // ✅ Reload messages in background to sync with database
+      print('Reloading messages after discard...');
+      await _loadMessages();
+      print('✓ Messages reloaded successfully');
+      
     } catch (e, stackTrace) {
       print('✗ Error discarding transaction: $e');
       print('Stack trace: $stackTrace');
@@ -1054,11 +1149,33 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error discarding: $e'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Error discarding transaction',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  e.toString(),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => _discardTransaction(message),
+            ),
           ),
         );
+        
+        // Reload to restore UI state
+        await _loadMessages();
       }
     }
   }
