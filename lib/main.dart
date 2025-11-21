@@ -1,4 +1,4 @@
-// lib/main.dart - Updated with MPESA SMS navigation
+// lib/main.dart - Fixed with working drawer navigation
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
@@ -11,7 +11,7 @@ import 'widgets/transactions/transaction_list.dart';
 import 'widgets/categories/categories_page.dart';
 import 'widgets/reports/reports_page.dart';
 import 'widgets/settings/settings_page.dart';
-import 'widgets/sms/sms_messages_page.dart';  // ✓ ADDED
+import 'widgets/sms/sms_messages_page.dart';
 
 // Global navigator key for notification navigation
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -134,6 +134,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Method to handle navigation from drawer
+  void _navigateToIndex(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -147,7 +154,10 @@ class _HomePageState extends State<HomePage> {
           },
         ),
       ),
-      drawer: const AppDrawer(),
+      drawer: AppDrawer(
+        currentIndex: _selectedIndex,
+        onNavigate: _navigateToIndex,
+      ),
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
@@ -172,7 +182,14 @@ class _HomePageState extends State<HomePage> {
 }
 
 class AppDrawer extends StatelessWidget {
-  const AppDrawer({super.key});
+  final int currentIndex;
+  final Function(int) onNavigate;
+  
+  const AppDrawer({
+    super.key,
+    required this.currentIndex,
+    required this.onNavigate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -239,28 +256,34 @@ class AppDrawer extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.list),
               title: const Text('Transactions'),
+              selected: currentIndex == 0,
               onTap: () {
                 Navigator.pop(context);
+                onNavigate(0);  // Navigate to Transactions
               },
             ),
             ListTile(
               leading: const Icon(Icons.category),
               title: const Text('Categories'),
+              selected: currentIndex == 1,
               onTap: () {
                 Navigator.pop(context);
+                onNavigate(1);  // Navigate to Categories
               },
             ),
             ListTile(
               leading: const Icon(Icons.analytics),
               title: const Text('Reports'),
+              selected: currentIndex == 2,
               onTap: () {
                 Navigator.pop(context);
+                onNavigate(2);  // Navigate to Reports
               },
             ),
             
             const Divider(),
             
-            // ✓ ADDED THIS - MPESA SMS Button
+            // MPESA SMS Button
             ListTile(
               leading: const Icon(Icons.message, color: Colors.green),
               title: const Text('MPESA SMS'),
