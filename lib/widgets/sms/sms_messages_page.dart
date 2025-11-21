@@ -1064,38 +1064,63 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
   }
 
   /// ✅ FIXED: Properly discard and immediately refresh with better error handling
-  Future<void> _discardTransaction(ParsedMpesaMessage message) async {
-    try {
-      print('=== Discarding Transaction ===');
-      print('Code: ${message.transactionCode}');
-      print('User ID: ${getUserId()}');
+Future<void> _discardTransaction(ParsedMpesaMessage message) async {
+  try {
+    print('=== Discarding Transaction ===');
+    print('Code: ${message.transactionCode}');
+    print('User ID: ${getUserId()}');
+    
+    // Get user ID first
+    final userId = getUserId();
+    if (userId == null) {
+      throw Exception('User not logged in');
+    }
+    
+    // ✅ CRITICAL: First check if already discarded (prevent duplicates)
+    final alreadyDiscarded = await db.getOptional('''
+      SELECT COUNT(*) as count 
+      FROM discarded_mpesa 
+      WHERE user_id = ? AND transaction_code = ?
+    ''', [userId, message.transactionCode]);
+    
+    final existingCount = (alreadyDiscarded?['count'] as int? ?? 0);
+    if (existingCount > 0) {
+      print('⚠ Transaction ${message.transactionCode} already discarded');
       
-      // Get user ID first
-      final userId = getUserId();
-      if (userId == null) {
-        throw Exception('User not logged in');
+      // Just remove from UI and reload
+      if (mounted) {
+        setState(() {
+          _pendingMessages.removeWhere((m) => m.transactionCode == message.transactionCode);
+        });
+        await _loadMessages();
       }
-      
-      // Save to discarded_mpesa table
-      final discarded = await DiscardedMpesa.create(
-        transactionCode: message.transactionCode,
-        transactionType: message.type.name.toUpperCase(),
-        amount: message.amount,
-        counterpartyName: message.counterpartyName,
-        counterpartyNumber: message.counterpartyNumber,
-        transactionDate: message.transactionDate,
-        isDebit: message.isDebit,
-        rawMessage: message.rawMessage,
-        discardReason: 'User discarded from pending list',
-      );
+      return;
+    }
+    
+    // Save to discarded_mpesa table
+    final discarded = await DiscardedMpesa.create(
+      transactionCode: message.transactionCode,
+      transactionType: message.type.name.toUpperCase(),
+      amount: message.amount,
+      counterpartyName: message.counterpartyName,
+      counterpartyNumber: message.counterpartyNumber,
+      transactionDate: message.transactionDate,
+      isDebit: message.isDebit,
+      rawMessage: message.rawMessage,
+      discardReason: 'User discarded from pending list',
+    );
 
-      print('✓ Transaction saved to discarded_mpesa table with ID: ${discarded.id}');
+    print('✓ Transaction saved to discarded_mpesa table with ID: ${discarded.id}');
 
-      // ✅ Verify it was actually saved
-      await Future.delayed(const Duration(milliseconds: 200));
-      
-      await _debugCheckDiscardedStatus(message.transactionCode);
-      
+    // ✅ CRITICAL: Wait longer for database commit
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // ✅ Verify it was actually saved with retry logic
+    int retries = 0;
+    const maxRetries = 5;
+    bool verified = false;
+    
+    while (retries < maxRetries && !verified) {
       final verifyResult = await db.getOptional('''
         SELECT COUNT(*) as count 
         FROM discarded_mpesa 
@@ -1103,82 +1128,94 @@ class _SmsMessagesPageState extends State<SmsMessagesPage> {
       ''', [userId, message.transactionCode]);
       
       final count = (verifyResult?['count'] as int? ?? 0);
-      print('✓ Verification: Found $count entry in discarded_mpesa table');
+      print('Verification attempt ${retries + 1}: Found $count entry');
       
-      if (count == 0) {
-        throw Exception('Transaction was not saved to discarded_mpesa table');
+      if (count > 0) {
+        verified = true;
+        print('✓ Verification successful!');
+        break;
       }
-
-      if (!mounted) return;
       
-      // ✅ Remove from current pending list immediately (optimistic update)
-      setState(() {
-        _pendingMessages.removeWhere((m) => m.transactionCode == message.transactionCode);
-      });
-      
-      print('✓ Removed from UI pending list');
+      retries++;
+      if (retries < maxRetries) {
+        await Future.delayed(Duration(milliseconds: 100 * retries));
+      }
+    }
+    
+    if (!verified) {
+      throw Exception('Transaction was not saved to discarded_mpesa table after $maxRetries attempts');
+    }
 
-      // Show success message
+    if (!mounted) return;
+    
+    // ✅ Remove from current pending list immediately (optimistic update)
+    setState(() {
+      _pendingMessages.removeWhere((m) => m.transactionCode == message.transactionCode);
+    });
+    
+    print('✓ Removed from UI pending list');
+
+    // Show success message
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Transaction discarded: ${message.transactionCode}',
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    // ✅ CRITICAL: Force a complete reload to ensure UI is in sync
+    print('Forcing complete reload after discard...');
+    await _getStartAfreshTime(); // This will reload everything from scratch
+    print('✓ Complete reload finished');
+    
+  } catch (e, stackTrace) {
+    print('✗ Error discarding transaction: $e');
+    print('Stack trace: $stackTrace');
+    
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.check_circle, color: Colors.white),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Transaction discarded: ${message.transactionCode}',
-                ),
+              const Text(
+                'Error discarding transaction',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                e.toString(),
+                style: const TextStyle(fontSize: 12),
               ),
             ],
           ),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _discardTransaction(message),
+          ),
         ),
       );
-
-      // ✅ Reload messages in background to sync with database
-      print('Reloading messages after discard...');
-      await _loadMessages();
-      print('✓ Messages reloaded successfully');
       
-    } catch (e, stackTrace) {
-      print('✗ Error discarding transaction: $e');
-      print('Stack trace: $stackTrace');
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Error discarding transaction',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  e.toString(),
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: () => _discardTransaction(message),
-            ),
-          ),
-        );
-        
-        // Reload to restore UI state
-        await _loadMessages();
-      }
+      // Force reload to restore correct UI state
+      await _getStartAfreshTime();
     }
   }
+}
 
   IconData _getIconForType(SupportedMpesaType type) {
     switch (type) {
